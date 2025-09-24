@@ -13,7 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-
+//clang++20 -std=c++26 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -I/usr/local/include -L/usr/local/lib -DSHM -lGL -lGLU -lGLEW -lglfw -lm
 // --- Структуры объектов и BVH ---
 #define CXX 10 // step
 #define tCXX 2*CXX
