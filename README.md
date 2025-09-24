@@ -1,4 +1,4 @@
-# TestCollision with custom BVH 
+# TestCollision with custom tree 
 TestCollision
 
 
