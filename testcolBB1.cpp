@@ -13,11 +13,11 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-//clang++20 -std=c++26 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -I/usr/local/include -L/usr/local/lib -DSHM -lGL -lGLU -lGLEW -lglfw -lm
+
 // --- Структуры объектов и BVH ---
-#define CXX 10 // step
+#define CXX 100 // step
 #define tCXX 2*CXX
-#define tN 30
+#define tN 300
 int wi=800;
 int he=600;
 struct Object3D {
@@ -149,23 +149,76 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
 
 // --- Шейдеры ---
 
+// const char* vertexShaderSrc = R"(
+// #version 460 core
+// layout(location=0) in vec3 aPos;
+// uniform mat4 model;
+// uniform mat4 view;
+// uniform mat4 projection;
+// void main() {
+//     gl_Position = projection * view * model * vec4(aPos,1.0);
+// }
+// )";
+
+// const char* fragmentShaderSrc = R"(
+// #version 460 core
+// out vec4 FragColor;
+// uniform vec3 color;
+// void main() {
+//     FragColor = vec4(color,1.0);
+// }
+// )";
+
+
+
+
 const char* vertexShaderSrc = R"(
 #version 460 core
 layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNormal;
+
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+
+out vec3 FragPos;
+out vec3 Normal;
+
 void main() {
-    gl_Position = projection * view * model * vec4(aPos,1.0);
+    FragPos = vec3(model * vec4(aPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * aNormal;
+    gl_Position = projection * view * vec4(FragPos, 1.0);
 }
 )";
+
+
 
 const char* fragmentShaderSrc = R"(
 #version 460 core
 out vec4 FragColor;
-uniform vec3 color;
+
+in vec3 FragPos;
+in vec3 Normal;
+
+uniform vec3 lightPos;
+uniform vec3 viewPos;
+uniform vec3 objectColor;
+
 void main() {
-    FragColor = vec4(color,1.0);
+    // Амбиентное
+    vec3 ambient = 0.3 * objectColor;
+    // Диффузное
+    vec3 norm = normalize(Normal);
+    vec3 lightDir = normalize(lightPos - FragPos);
+    float diff = max(dot(norm, lightDir), 0.0);
+    vec3 diffuse = diff * objectColor*2.0f;
+    // Блик
+    vec3 viewDir = normalize(viewPos - FragPos);
+    vec3 reflectDir = reflect(-lightDir, norm);
+    float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32);
+    vec3 specular = vec3(0.5) * spec;
+    vec3 result = ambient + diffuse + specular;
+    FragColor = vec4(result, 1.0);
 }
 )";
 
@@ -206,47 +259,47 @@ GLuint createProgram() {
 // Создаем меш куба
 float cubeVertices[] = {
   // positions
-  -0.5f, -0.5f, -0.5f,  //0.0f, 0.0f,
-  0.5f, -0.5f, -0.5f,  //1.0f, 0.0f,
-  0.5f,  0.5f, -0.5f,  //1.0f, 1.0f,
-  0.5f,  0.5f, -0.5f,  //1.0f, 1.0f,
-  -0.5f,  0.5f, -0.5f,  //0.0f, 1.0f,
-  -0.5f, -0.5f, -0.5f,  //0.0f, 0.0f,
+  -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//0.0f, 0.0f,
+  0.5f, -0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//1.0f, 0.0f,
+  0.5f,  0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//1.0f, 1.0f,
+  0.5f,  0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//1.0f, 1.0f,
+  -0.5f,  0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//0.0f, 1.0f,
+  -0.5f, -0.5f, -0.5f,  0.0f, 0.0f, -1.0f,//0.0f, 0.0f,
 
-  -0.5f, -0.5f,  0.5f,  //0.0f, 0.0f,
-  0.5f, -0.5f,  0.5f,  //1.0f, 0.0f,
-  0.5f,  0.5f,  0.5f,  //1.0f, 1.0f,
-  0.5f,  0.5f,  0.5f,  //1.0f, 1.0f,
-  -0.5f,  0.5f,  0.5f,  //0.0f, 1.0f,
-  -0.5f, -0.5f,  0.5f,  //0.0f, 0.0f,
+  -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//0.0f, 0.0f,
+  0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//1.0f, 0.0f,
+  0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//1.0f, 1.0f,
+  0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//1.0f, 1.0f,
+  -0.5f,  0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//0.0f, 1.0f,
+  -0.5f, -0.5f,  0.5f,  0.0f, 0.0f, 1.0f,//0.0f, 0.0f,
 
-  -0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
-  -0.5f,  0.5f, -0.5f,  //1.0f, 1.0f,
-  -0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
-  -0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
-  -0.5f, -0.5f,  0.5f,  //0.0f, 0.0f,
-  -0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
+  -0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,//1.0f, 0.0f,
+  -0.5f,  0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,//1.0f, 1.0f,
+  -0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,//0.0f, 1.0f,
+  -0.5f, -0.5f, -0.5f,  -1.0f, 0.0f, 0.0f,//0.0f, 1.0f,
+  -0.5f, -0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,//0.0f, 0.0f,
+  -0.5f,  0.5f,  0.5f,  -1.0f, 0.0f, 0.0f,//1.0f, 0.0f,
 
-  0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
-  0.5f,  0.5f, -0.5f,  //1.0f, 1.0f,
-  0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
-  0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
-  0.5f, -0.5f,  0.5f,  //0.0f, 0.0f,
-  0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
+  0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,//1.0f, 0.0f,
+  0.5f,  0.5f, -0.5f,  1.0f, 0.0f, 0.0f,//1.0f, 1.0f,
+  0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,//0.0f, 1.0f,
+  0.5f, -0.5f, -0.5f,  1.0f, 0.0f, 0.0f,//0.0f, 1.0f,
+  0.5f, -0.5f,  0.5f,  1.0f, 0.0f, 0.0f,//0.0f, 0.0f,
+  0.5f,  0.5f,  0.5f,  1.0f, 0.0f, 0.0f,//1.0f, 0.0f,
 
-  -0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
-  0.5f, -0.5f, -0.5f,  //1.0f, 1.0f,
-  0.5f, -0.5f,  0.5f,  //1.0f, 0.0f,
-  0.5f, -0.5f,  0.5f,  //1.0f, 0.0f,
-  -0.5f, -0.5f,  0.5f,  //0.0f, 0.0f,
-  -0.5f, -0.5f, -0.5f,  //0.0f, 1.0f,
+  -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,//0.0f, 1.0f,
+  0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,//1.0f, 1.0f,
+  0.5f, -0.5f,  0.5f,  0.0f, -1.0f, 0.0f,//1.0f, 0.0f,
+  0.5f, -0.5f,  0.5f,  0.0f, -1.0f, 0.0f,//1.0f, 0.0f,
+  -0.5f, -0.5f,  0.5f,  0.0f, -1.0f, 0.0f,//0.0f, 0.0f,
+  -0.5f, -0.5f, -0.5f,  0.0f, -1.0f, 0.0f,//0.0f, 1.0f,
 
-  -0.5f,  0.5f, -0.5f,  //0.0f, 1.0f,
-  0.5f,  0.5f, -0.5f,  //1.0f, 1.0f,
-  0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
-  0.5f,  0.5f,  0.5f,  //1.0f, 0.0f,
-  -0.5f,  0.5f,  0.5f,  //0.0f, 0.0f,
-  -0.5f,  0.5f, -0.5f//,  0.0f, 1.0f
+  -0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,//0.0f, 1.0f,
+  0.5f,  0.5f, -0.5f,  0.0f, 1.0f, 0.0f,//1.0f, 1.0f,
+  0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,//1.0f, 0.0f,
+  0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,//1.0f, 0.0f,
+  -0.5f,  0.5f,  0.5f,  0.0f, 1.0f, 0.0f,//0.0f, 0.0f,
+  -0.5f,  0.5f, -0.5f,0.0f, 1.0f, 0.0f,//  0.0f, 1.0f
 };
 
 // --- main() ---
@@ -441,7 +494,9 @@ void createVAOVBObufs(GLuint &cubeVAO, GLuint &cubeVBO) {
     glBindBuffer(GL_ARRAY_BUFFER,cubeVBO);
     glBufferData(GL_ARRAY_BUFFER,sizeof(cubeVertices),cubeVertices,GL_STATIC_DRAW);
     glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,3*sizeof(float),(void*)0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),(void *)0);
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
     glBindVertexArray(0);
 }
 
@@ -465,6 +520,8 @@ int main() {
     if (glewInit()!=GLEW_OK) { std::cerr<<"Glew init failed\n"; return -1; }
 
     glEnable(GL_DEPTH_TEST);
+
+   
     GLuint shaderProgram = createProgram();
 
     // VAO/VBO для куба
@@ -478,38 +535,38 @@ int main() {
     
     // Создаем объекты
     std::vector<Object3D> objects1;
-    glm::vec3 v1=glm::vec3{20,0,0};
+    glm::vec3 v1=glm::vec3{200,0,0};
     createOneBigCubeCoords(objects1, v1);
 
     // Создаем объекты
     std::vector<Object3D> objects2;
-    glm::vec3 v2=glm::vec3{0,0,-20};
+    glm::vec3 v2=glm::vec3{0,0,-200};
     createOneBigCubeCoords(objects2, v2);
     
     // Создаем объекты
     std::vector<Object3D> objects3;
-    glm::vec3 v3=glm::vec3{20,0,-20};
+    glm::vec3 v3=glm::vec3{200,0,-200};
     createOneBigCubeCoords(objects3,v3);
 
 
     // Создаем объекты
     std::vector<Object3D> objects4;
-    glm::vec3 v4=glm::vec3{0,20,0};
+    glm::vec3 v4=glm::vec3{0,200,0};
     createOneBigCubeCoords(objects4, v4);
     
     // Создаем объекты
     std::vector<Object3D> objects5;
-    glm::vec3 v5=glm::vec3{20,20,0};
+    glm::vec3 v5=glm::vec3{200,200,0};
     createOneBigCubeCoords(objects5, v5);
 
     // Создаем объекты
     std::vector<Object3D> objects6;
-    glm::vec3 v6=glm::vec3{0,20,-20};
+    glm::vec3 v6=glm::vec3{0,200,-200};
     createOneBigCubeCoords(objects6, v6);
     
     // Создаем объекты
     std::vector<Object3D> objects7;
-    glm::vec3 v7=glm::vec3{20,20,-20};
+    glm::vec3 v7=glm::vec3{200,200,-200};
     createOneBigCubeCoords(objects7,v7);
 
     
@@ -659,9 +716,14 @@ int main() {
       GLint locProj = glGetUniformLocation(shaderProgram,"projection");
       glUniformMatrix4fv(locView,1,false,&view[0][0]);
       glUniformMatrix4fv(locProj,1,false,&projection[0][0]);
-
+// Установка uniform-параметров освещения
+GLint locLightPos = glGetUniformLocation(shaderProgram, "lightPos");
+GLint locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
+//glUseProgram(shaderProgram);
+glUniform3f(locLightPos, 10.f, 10.f, 10.f); // позиция источника света
+glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
       GLint locModel = glGetUniformLocation(shaderProgram,"model");
-      GLint locColor = glGetUniformLocation(shaderProgram,"color");
+      GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
 
       glBindVertexArray(cubeVAO);
       for (auto &o : objects) {
