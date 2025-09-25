@@ -1,7 +1,9 @@
+#include "glm/ext/matrix_clip_space.hpp"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 #include <vector>
 #include <algorithm>
 #include <iostream>
@@ -34,117 +36,117 @@ struct Object3D {
 };
 
 struct AABB {
-    glm::vec3 min, max;
-    AABB() : min(glm::vec3(0)), max(glm::vec3(0)) {}
-    AABB(const glm::vec3& min_, const glm::vec3& max_) : min(min_), max(max_) {}
-    void expand(const Object3D& obj) {
-        glm::vec3 minO, maxO;
-        if (obj.isSphere) {
-            minO = obj.position - glm::vec3(obj.radius);
-            maxO = obj.position + glm::vec3(obj.radius);
-        } else {
-	  minO = obj.position - glm::vec3(obj.size.x * 0.5f,obj.size.y * 0.5f,obj.size.z * 0.5f);
-          maxO = obj.position + glm::vec3(obj.size.x * 0.5f,obj.size.y * 0.5f,obj.size.z * 0.5f);
-        }
-        min = glm::min(min, minO);
-        max = glm::max(max, maxO);
+  glm::vec3 min, max;
+  AABB() : min(glm::vec3(0)), max(glm::vec3(0)) {}
+  AABB(const glm::vec3& min_, const glm::vec3& max_) : min(min_), max(max_) {}
+  void expand(const Object3D& obj) {
+    glm::vec3 minO, maxO;
+    if (obj.isSphere) {
+      minO = obj.position - glm::vec3(obj.radius);
+      maxO = obj.position + glm::vec3(obj.radius);
+    } else {
+      minO = obj.position - glm::vec3(obj.size.x * 0.5f,obj.size.y * 0.5f,obj.size.z * 0.5f);
+      maxO = obj.position + glm::vec3(obj.size.x * 0.5f,obj.size.y * 0.5f,obj.size.z * 0.5f);
     }
-    bool intersects(const AABB& other) const {
-        return (max.x >= other.min.x && min.x <= other.max.x) &&
-               (max.y >= other.min.y && min.y <= other.max.y) &&
-               (max.z >= other.min.z && min.z <= other.max.z);
-    }
+    min = glm::min(min, minO);
+    max = glm::max(max, maxO);
+  }
+  bool intersects(const AABB& other) const {
+    return (max.x >= other.min.x && min.x <= other.max.x) &&
+      (max.y >= other.min.y && min.y <= other.max.y) &&
+      (max.z >= other.min.z && min.z <= other.max.z);
+  }
 };
 
 struct BVHNode {
-    AABB box;
-    BVHNode* left = nullptr;
-    BVHNode* right = nullptr;
-    std::vector<Object3D*> objects; // листовой узел
-    bool isLeaf() const { return !objects.empty(); }
-    ~BVHNode() {
-        delete left;
-        delete right;
-    }
+  AABB box;
+  BVHNode* left = nullptr;
+  BVHNode* right = nullptr;
+  std::vector<Object3D*> objects; // листовой узел
+  bool isLeaf() const { return !objects.empty(); }
+  ~BVHNode() {
+    delete left;
+    delete right;
+  }
 };
 
 BVHNode* buildBVH(std::vector<Object3D*>& objs, int depth=0) {
-    BVHNode* node = new BVHNode();
-    // Создаем изначальный AABB
-    node->box = AABB(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
-    for (auto* o : objs) node->box.expand(*o);
-    if (objs.size() <= 2) {
-        node->objects = objs;
-        return node;
-    }
-    int axis = depth % 3;
-    auto compareAxis = [axis](Object3D* a, Object3D* b) {
-        float aCoord = (axis==0) ? a->position.x : (axis==1) ? a->position.y : a->position.z;
-        float bCoord = (axis==0) ? b->position.x : (axis==1) ? b->position.y : b->position.z;
-        return aCoord < bCoord;
-    };
-    std::sort(objs.begin(), objs.end(), compareAxis);
-    size_t mid = objs.size()/2;
-    std::vector<Object3D *> leftObjs(objs.begin(), objs.begin()+mid);
-    std::vector<Object3D *> rightObjs(objs.begin() + mid, objs.end());
-    //std::cout<<depth<<std::endl;
-    node->left = buildBVH(leftObjs, depth+1);
-    node->right = buildBVH(rightObjs, depth+1);
+  BVHNode* node = new BVHNode();
+  // Создаем изначальный AABB
+  node->box = AABB(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
+  for (auto* o : objs) node->box.expand(*o);
+  if (objs.size() <= 2) {
+    node->objects = objs;
     return node;
+  }
+  int axis = depth % 3;
+  auto compareAxis = [axis](Object3D* a, Object3D* b) {
+    float aCoord = (axis==0) ? a->position.x : (axis==1) ? a->position.y : a->position.z;
+    float bCoord = (axis==0) ? b->position.x : (axis==1) ? b->position.y : b->position.z;
+    return aCoord < bCoord;
+  };
+  std::sort(objs.begin(), objs.end(), compareAxis);
+  size_t mid = objs.size()/2;
+  std::vector<Object3D *> leftObjs(objs.begin(), objs.begin()+mid);
+  std::vector<Object3D *> rightObjs(objs.begin() + mid, objs.end());
+  //std::cout<<depth<<std::endl;
+  node->left = buildBVH(leftObjs, depth+1);
+  node->right = buildBVH(rightObjs, depth+1);
+  return node;
 }
 
 bool checkCollision(const Object3D& a, const Object3D& b) {
-    if (a.isSphere && b.isSphere) {
-        // Проверка сфер
-        float distSq = glm::dot(a.position - b.position, a.position - b.position);
-        float radiusSum = a.radius.x + b.radius.x; // предполагаю радиусы одинаковые по x,y,z
-        return distSq <= radiusSum * radiusSum;
+  if (a.isSphere && b.isSphere) {
+    // Проверка сфер
+    float distSq = glm::dot(a.position - b.position, a.position - b.position);
+    float radiusSum = a.radius.x + b.radius.x; // предполагаю радиусы одинаковые по x,y,z
+    return distSq <= radiusSum * radiusSum;
+  } else {
+    // Проверка кубов (или смешанных)
+    // Создаем AABB для каждого и проверяем пересечение
+    AABB aabbA;
+    if (a.isSphere) {
+      aabbA.min = a.position - glm::vec3(a.radius);
+      aabbA.max = a.position + glm::vec3(a.radius);
     } else {
-        // Проверка кубов (или смешанных)
-        // Создаем AABB для каждого и проверяем пересечение
-        AABB aabbA;
-        if (a.isSphere) {
-            aabbA.min = a.position - glm::vec3(a.radius);
-            aabbA.max = a.position + glm::vec3(a.radius);
-        } else {
-            aabbA.min = a.position - glm::vec3(a.size.x * 0.5f, a.size.y * 0.5f, a.size.z * 0.5f);
-            aabbA.max = a.position + glm::vec3(a.size.x * 0.5f, a.size.y * 0.5f, a.size.z * 0.5f);
-        }
-
-        AABB aabbB;
-        if (b.isSphere) {
-            aabbB.min = b.position - glm::vec3(b.radius);
-            aabbB.max = b.position + glm::vec3(b.radius);
-        } else {
-            aabbB.min = b.position - glm::vec3(b.size.x * 0.5f, b.size.y * 0.5f, b.size.z * 0.5f);
-            aabbB.max = b.position + glm::vec3(b.size.x * 0.5f, b.size.y * 0.5f, b.size.z * 0.5f);
-        }
-
-        return aabbA.intersects(aabbB);
+      aabbA.min = a.position - glm::vec3(a.size.x * 0.5f, a.size.y * 0.5f, a.size.z * 0.5f);
+      aabbA.max = a.position + glm::vec3(a.size.x * 0.5f, a.size.y * 0.5f, a.size.z * 0.5f);
     }
+
+    AABB aabbB;
+    if (b.isSphere) {
+      aabbB.min = b.position - glm::vec3(b.radius);
+      aabbB.max = b.position + glm::vec3(b.radius);
+    } else {
+      aabbB.min = b.position - glm::vec3(b.size.x * 0.5f, b.size.y * 0.5f, b.size.z * 0.5f);
+      aabbB.max = b.position + glm::vec3(b.size.x * 0.5f, b.size.y * 0.5f, b.size.z * 0.5f);
+    }
+
+    return aabbA.intersects(aabbB);
+  }
 }
 
 
 void traverseBVH(BVHNode* node, Object3D* obj) {
   if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
-                                               obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
-    if (node->isLeaf()) {
-        for (auto* other : node->objects) {
-          if (other != obj && checkCollision(*obj, *other)) {
-            if (!obj->stayObj) {
-	      obj->velocity *= -1;
-	      obj->collided = true;
-            }
-            if (!other->stayObj) {
-	      other->velocity *= -1;
-	      other->collided = true;
-            }
-	  }
-        }
-    } else {
-        traverseBVH(node->left, obj);
-        traverseBVH(node->right, obj);
+					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
+  if (node->isLeaf()) {
+    for (auto* other : node->objects) {
+      if (other != obj && checkCollision(*obj, *other)) {
+	if (!obj->stayObj) {
+	  obj->velocity *= -1;
+	  obj->collided = true;
+	}
+	if (!other->stayObj) {
+	  other->velocity *= -1;
+	  other->collided = true;
+	}
+      }
     }
+  } else {
+    traverseBVH(node->left, obj);
+    traverseBVH(node->right, obj);
+  }
 }
 
 // --- Шейдеры ---
@@ -172,7 +174,7 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
 
 
 
-const char* vertexShaderSrc = R"(
+const char *vertexShaderSrc = R"(
 #version 460 core
 layout(location=0) in vec3 aPos;
 layout(location=1) in vec3 aNormal;
@@ -180,29 +182,50 @@ layout(location=1) in vec3 aNormal;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
+uniform mat4 lightSpaceMatrix;
 
+out vec4 FragPosLightSpace;
 out vec3 FragPos;
 out vec3 Normal;
 
 void main() {
     FragPos = vec3(model * vec4(aPos, 1.0));
     Normal = mat3(transpose(inverse(model))) * aNormal;
+    FragPosLightSpace = lightSpaceMatrix * vec4(FragPos, 1.0);
     gl_Position = projection * view * vec4(FragPos, 1.0);
 }
 )";
 
-
-
-const char* fragmentShaderSrc = R"(
+const char *fragmentShaderSrc = R"(
 #version 460 core
 out vec4 FragColor;
 
+
+in vec4 FragPosLightSpace;
 in vec3 FragPos;
 in vec3 Normal;
 
 uniform vec3 lightPos;
 uniform vec3 viewPos;
 uniform vec3 objectColor;
+uniform sampler2D shadowMap;
+
+// Расчет тени
+float ShadowCalculation(vec4 fragPosLightSpace)
+{
+    vec3 projCoords = fragPosLightSpace.xyz / fragPosLightSpace.w;
+    projCoords = projCoords * 0.5 + 0.5; // преобразование в диапазон 0..1
+
+    float closestDepth = texture(shadowMap, projCoords.xy).r;
+    float currentDepth = projCoords.z;
+
+    float bias = 0.005;
+    float shadow = currentDepth - bias > closestDepth ? 1.0 : 0.0;
+
+    // Можно добавить мягкое затенение (PCF) для более гладких теней
+    return shadow;
+}
+
 
 void main() {
     // Амбиентное
@@ -211,7 +234,10 @@ void main() {
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * objectColor*2.0f;
+
+    float shadow = ShadowCalculation(FragPosLightSpace);
+
+    vec3 diffuse = (1.0 - shadow) *diff * objectColor*2.0f;
     // Блик
     vec3 viewDir = normalize(viewPos - FragPos);
     vec3 reflectDir = reflect(-lightDir, norm);
@@ -222,39 +248,60 @@ void main() {
 }
 )";
 
+const char *depth_vertex_shadersrc = R"(
+#version 330 core
+layout(location = 0) in vec3 aPos;
+
+uniform mat4 model;
+uniform mat4 lightSpaceMatrix;
+
+void main()
+{
+    gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
+}
+)";
+const char* depth_fragment_shader = R"(
+#version 330 core
+void main()
+{
+    // ничего не нужно, depth берется автоматически
+}
+)";
 // Компиляция шейдера
 GLuint compileShader(GLenum type, const char* src) {
-    GLuint shader=glCreateShader(type);
-    glShaderSource(shader,1,&src,nullptr);
-    glCompileShader(shader);
-    int success;
-    glGetShaderiv(shader,GL_COMPILE_STATUS,&success);
-    if(!success){
-        char infoLog[512];
-        glGetShaderInfoLog(shader,512,nullptr,infoLog);
-        std::cerr<<"Shader compile error: "<<infoLog<<std::endl;
-    }
-    return shader;
+  GLuint shader=glCreateShader(type);
+  glShaderSource(shader,1,&src,nullptr);
+  glCompileShader(shader);
+  int success;
+  glGetShaderiv(shader,GL_COMPILE_STATUS,&success);
+  if(!success){
+    char infoLog[512];
+    glGetShaderInfoLog(shader,512,nullptr,infoLog);
+    std::cerr<<"Shader compile error: "<<infoLog<<std::endl;
+  }
+  return shader;
 }
 
-GLuint createProgram() {
-    GLuint vShader=compileShader(GL_VERTEX_SHADER, vertexShaderSrc);
-    GLuint fShader=compileShader(GL_FRAGMENT_SHADER, fragmentShaderSrc);
-    GLuint prog=glCreateProgram();
-    glAttachShader(prog,vShader);
-    glAttachShader(prog,fShader);
-    glLinkProgram(prog);
-    int success;
-    glGetProgramiv(prog,GL_LINK_STATUS,&success);
-    if(!success){
-        char infoLog[512];
-        glGetProgramInfoLog(prog,512,nullptr,infoLog);
-        std::cerr<<"Link error: "<<infoLog<<std::endl;
-    }
-    glDeleteShader(vShader);
-    glDeleteShader(fShader);
-    return prog;
+GLuint createProgram(const char* a,const char* b) {
+  GLuint vShader=compileShader(GL_VERTEX_SHADER,a);
+  GLuint fShader=compileShader(GL_FRAGMENT_SHADER, b);
+  GLuint prog=glCreateProgram();
+  glAttachShader(prog,vShader);
+  glAttachShader(prog,fShader);
+  glLinkProgram(prog);
+  int success;
+  glGetProgramiv(prog,GL_LINK_STATUS,&success);
+  if(!success){
+    char infoLog[512];
+    glGetProgramInfoLog(prog,512,nullptr,infoLog);
+    std::cerr<<"Link error: "<<infoLog<<std::endl;
+  }
+  glDeleteShader(vShader);
+  glDeleteShader(fShader);
+  return prog;
 }
+
+
 
 // Создаем меш куба
 float cubeVertices[] = {
@@ -488,364 +535,496 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
 
 
 void createVAOVBObufs(GLuint &cubeVAO, GLuint &cubeVBO) {
-    glGenVertexArrays(1,&cubeVAO);
-    glGenBuffers(1,&cubeVBO);
-    glBindVertexArray(cubeVAO);
-    glBindBuffer(GL_ARRAY_BUFFER,cubeVBO);
-    glBufferData(GL_ARRAY_BUFFER,sizeof(cubeVertices),cubeVertices,GL_STATIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),(void *)0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
-    glBindVertexArray(0);
+  glGenVertexArrays(1,&cubeVAO);
+  glGenBuffers(1,&cubeVBO);
+  glBindVertexArray(cubeVAO);
+  glBindBuffer(GL_ARRAY_BUFFER,cubeVBO);
+  glBufferData(GL_ARRAY_BUFFER,sizeof(cubeVertices),cubeVertices,GL_STATIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float),(void *)0);
+  glEnableVertexAttribArray(1);
+  glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(3 * sizeof(float)));
+  glBindVertexArray(0);
 }
-
+glm::vec3 lightPos = glm::vec3(200.0f, 400.0f, 200.0f);
+float angle = 0.0f; // угол для движения по окружности
 int main() {
-    srand(time(nullptr));
-    // Инициализация GLFW
-    if (!glfwInit()) return -1;
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    GLFWwindow* window = glfwCreateWindow(800,600,"OpenGL 4.6 Cube & Sphere Scene",nullptr,nullptr);
-    if (!window) { glfwTerminate(); return -1; }
-    glfwMakeContextCurrent(window);
-    glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
-    glfwSetCursorPosCallback(window, mouse_callback);
-    glfwSetMouseButtonCallback(window, mouse_button_callback);
+  srand(time(nullptr));
+  // Инициализация GLFW
+  if (!glfwInit()) return -1;
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+  GLFWwindow* window = glfwCreateWindow(800,600,"OpenGL 4.6 Cube & Sphere Scene",nullptr,nullptr);
+  if (!window) { glfwTerminate(); return -1; }
+  glfwMakeContextCurrent(window);
+  glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+  glfwSetCursorPosCallback(window, mouse_callback);
+  glfwSetMouseButtonCallback(window, mouse_button_callback);
 
-        // tell GLFW to capture our mouse
-    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-    glewExperimental=GL_TRUE;
-    if (glewInit()!=GLEW_OK) { std::cerr<<"Glew init failed\n"; return -1; }
+  // tell GLFW to capture our mouse
+  glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+  glewExperimental=GL_TRUE;
+  if (glewInit()!=GLEW_OK) { std::cerr<<"Glew init failed\n"; return -1; }
 
-    glEnable(GL_DEPTH_TEST);
+  glEnable(GL_DEPTH_TEST);
 
    
-    GLuint shaderProgram = createProgram();
-
-    // VAO/VBO для куба
-    GLuint cubeVAO, cubeVBO;
-    createVAOVBObufs(cubeVAO, cubeVBO);
-
-    // Создаем объекты
-    std::vector<Object3D> objects;
-    glm::vec3 v=glm::vec3{0,0,0};
-    createOneBigCubeCoords(objects, v);
-    
-    // Создаем объекты
-    std::vector<Object3D> objects1;
-    glm::vec3 v1=glm::vec3{200,0,0};
-    createOneBigCubeCoords(objects1, v1);
-
-    // Создаем объекты
-    std::vector<Object3D> objects2;
-    glm::vec3 v2=glm::vec3{0,0,-200};
-    createOneBigCubeCoords(objects2, v2);
-    
-    // Создаем объекты
-    std::vector<Object3D> objects3;
-    glm::vec3 v3=glm::vec3{200,0,-200};
-    createOneBigCubeCoords(objects3,v3);
+  GLuint shaderProgram = createProgram(vertexShaderSrc,fragmentShaderSrc);
+  GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc,depth_fragment_shader);
+  // VAO/VBO для куба
+  GLuint cubeVAO, cubeVBO;
+  createVAOVBObufs(cubeVAO, cubeVBO);
 
 
-    // Создаем объекты
-    std::vector<Object3D> objects4;
-    glm::vec3 v4=glm::vec3{0,200,0};
-    createOneBigCubeCoords(objects4, v4);
-    
-    // Создаем объекты
-    std::vector<Object3D> objects5;
-    glm::vec3 v5=glm::vec3{200,200,0};
-    createOneBigCubeCoords(objects5, v5);
+  GLuint depthMapFBO;
+  const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
+  glGenFramebuffers(1, &depthMapFBO);
 
-    // Создаем объекты
-    std::vector<Object3D> objects6;
-    glm::vec3 v6=glm::vec3{0,200,-200};
-    createOneBigCubeCoords(objects6, v6);
-    
-    // Создаем объекты
-    std::vector<Object3D> objects7;
-    glm::vec3 v7=glm::vec3{200,200,-200};
-    createOneBigCubeCoords(objects7,v7);
+  // Создать текстуру для depth
+  GLuint depthMap;
+  glGenTextures(1, &depthMap);
+  glBindTexture(GL_TEXTURE_2D, depthMap);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  float borderColor[] = {1.0, 1.0, 1.0, 1.0};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+  // Attach depth texture to FBO
+  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     
-    // 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs;
-    for (auto& o: objects) objPtrs.push_back(&o);
-    BVHNode* bvhRoot = buildBVH(objPtrs);
 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs1;
-    for (auto& o: objects1) objPtrs1.push_back(&o);
-    BVHNode *bvhRoot1 = buildBVH(objPtrs1);
+  // Создаем объекты
+  std::vector<Object3D> objects;
+  glm::vec3 v=glm::vec3{0,0,0};
+  createOneBigCubeCoords(objects, v);
+    
+  // Создаем объекты
+  std::vector<Object3D> objects1;
+  glm::vec3 v1=glm::vec3{200,0,0};
+  createOneBigCubeCoords(objects1, v1);
 
-    // 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs2;
-    for (auto& o: objects2) objPtrs2.push_back(&o);
-    BVHNode* bvhRoot2 = buildBVH(objPtrs2);
+  // Создаем объекты
+  std::vector<Object3D> objects2;
+  glm::vec3 v2=glm::vec3{0,0,-200};
+  createOneBigCubeCoords(objects2, v2);
+    
+  // Создаем объекты
+  std::vector<Object3D> objects3;
+  glm::vec3 v3=glm::vec3{200,0,-200};
+  createOneBigCubeCoords(objects3,v3);
 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs3;
-    for (auto& o: objects3) objPtrs3.push_back(&o);
-    BVHNode *bvhRoot3 = buildBVH(objPtrs3);
 
-    // 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs4;
-    for (auto& o: objects4) objPtrs4.push_back(&o);
-    BVHNode* bvhRoot4 = buildBVH(objPtrs4);
+  // Создаем объекты
+  std::vector<Object3D> objects4;
+  glm::vec3 v4=glm::vec3{0,200,0};
+  createOneBigCubeCoords(objects4, v4);
+    
+  // Создаем объекты
+  std::vector<Object3D> objects5;
+  glm::vec3 v5=glm::vec3{200,200,0};
+  createOneBigCubeCoords(objects5, v5);
 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs5;
-    for (auto& o: objects5) objPtrs5.push_back(&o);
-    BVHNode *bvhRoot5 = buildBVH(objPtrs5);
+  // Создаем объекты
+  std::vector<Object3D> objects6;
+  glm::vec3 v6=glm::vec3{0,200,-200};
+  createOneBigCubeCoords(objects6, v6);
+    
+  // Создаем объекты
+  std::vector<Object3D> objects7;
+  glm::vec3 v7=glm::vec3{200,200,-200};
+  createOneBigCubeCoords(objects7,v7);
 
-    // 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs6;
-    for (auto& o: objects6) objPtrs6.push_back(&o);
-    BVHNode* bvhRoot6 = buildBVH(objPtrs6);
+    
+  // 
+  // Построение BVH
+  std::vector<Object3D*> objPtrs;
+  for (auto& o: objects) objPtrs.push_back(&o);
+  BVHNode* bvhRoot = buildBVH(objPtrs);
 
-    // Построение BVH
-    std::vector<Object3D*> objPtrs7;
-    for (auto& o: objects7) objPtrs7.push_back(&o);
-    BVHNode *bvhRoot7 = buildBVH(objPtrs7);
+  // Построение BVH
+  std::vector<Object3D*> objPtrs1;
+  for (auto& o: objects1) objPtrs1.push_back(&o);
+  BVHNode *bvhRoot1 = buildBVH(objPtrs1);
+
+  // 
+  // Построение BVH
+  std::vector<Object3D*> objPtrs2;
+  for (auto& o: objects2) objPtrs2.push_back(&o);
+  BVHNode* bvhRoot2 = buildBVH(objPtrs2);
+
+  // Построение BVH
+  std::vector<Object3D*> objPtrs3;
+  for (auto& o: objects3) objPtrs3.push_back(&o);
+  BVHNode *bvhRoot3 = buildBVH(objPtrs3);
+
+  // 
+  // Построение BVH
+  std::vector<Object3D*> objPtrs4;
+  for (auto& o: objects4) objPtrs4.push_back(&o);
+  BVHNode* bvhRoot4 = buildBVH(objPtrs4);
+
+  // Построение BVH
+  std::vector<Object3D*> objPtrs5;
+  for (auto& o: objects5) objPtrs5.push_back(&o);
+  BVHNode *bvhRoot5 = buildBVH(objPtrs5);
+
+  // 
+  // Построение BVH
+  std::vector<Object3D*> objPtrs6;
+  for (auto& o: objects6) objPtrs6.push_back(&o);
+  BVHNode* bvhRoot6 = buildBVH(objPtrs6);
+
+  // Построение BVH
+  std::vector<Object3D*> objPtrs7;
+  for (auto& o: objects7) objPtrs7.push_back(&o);
+  BVHNode *bvhRoot7 = buildBVH(objPtrs7);
     
     
-    glm::vec3 min = {-10, -10, -10};
-    glm::vec3 max={10,10,10};
-    glm::vec3 velB1={((rand() % 100) / 100.0f - 0.5f) * 0.01f,
-	 ((rand() % 100) / 100.0f - 0.5f) * 0.01f,
-	 ((rand() % 100) / 100.0f - 0.5f) * 0.01f};
-    // Основной цикл
-    while (!glfwWindowShouldClose(window)) {
-      // per-frame time logic
-      // --------------------
-      float currentFrame = static_cast<float>(glfwGetTime());
-      deltaTime = currentFrame - lastFrame;
-      lastFrame = currentFrame;
-      // input
-      // -----
-      processInput(window);
+  glm::vec3 min = {-10, -10, -10};
+  glm::vec3 max={10,10,10};
+  glm::vec3 velB1={((rand() % 100) / 100.0f - 0.5f) * 0.01f,
+		   ((rand() % 100) / 100.0f - 0.5f) * 0.01f,
+		   ((rand() % 100) / 100.0f - 0.5f) * 0.01f};
+  // Основной цикл
+  while (!glfwWindowShouldClose(window)) {
+    // per-frame time logic
+    // --------------------
+    float currentFrame = static_cast<float>(glfwGetTime());
+    deltaTime = currentFrame - lastFrame;
+    lastFrame = currentFrame;
+    // input
+    // -----
+    processInput(window);
+    angle += glm::radians(20.0f) * deltaTime; // скорость вращения
+    lightPos.x = 200.0f * cos(angle);
+    lightPos.z = 200.0f * sin(angle);
+    glClearColor(0.1f,0.1f,0.15f,1.f);
+    glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
-      glClearColor(0.1f,0.1f,0.15f,1.f);
-      glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+    // posB1+= velB1;
+    // //objects[30].position += velB1;
+    // objects[30].position += velB1;
+    // objects[31].position += velB1;
+    // objects[32].position += velB1;
+    // objects[33].position += velB1;
+    // objects[34].position += velB1;
+    // objects[35].position += velB1;
       
-       	// posB1+= velB1;
-        // //objects[30].position += velB1;
-        // objects[30].position += velB1;
-        // objects[31].position += velB1;
-        // objects[32].position += velB1;
-        // objects[33].position += velB1;
-        // objects[34].position += velB1;
-	// objects[35].position += velB1;
-      
-      // Проверка столкновений
-      for (auto &o : objects) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot, &o);
-	}
+    // Проверка столкновений
+    for (auto &o : objects) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects1) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot1, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects1) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot1, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects2) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot2, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects2) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot2, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects3) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot3, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects3) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot3, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects4) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot4, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects4) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot4, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects5) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot5, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects5) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot5, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects6) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot6, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects6) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot6, &o);
       }
-      // Проверка столкновений
-      for (auto &o : objects7) {
-	o.collided=false;
-        if (!o.stayObj) {
-          o.position += o.velocity;
-	  traverseBVH(bvhRoot7, &o);
-	}
+    }
+    // Проверка столкновений
+    for (auto &o : objects7) {
+      o.collided=false;
+      if (!o.stayObj) {
+	o.position += o.velocity;
+	traverseBVH(bvhRoot7, &o);
       }
-      // Камера
-      glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-      glm::mat4 projection = glm::perspective(glm::radians(fov), (float)wi/he, 0.1f, 2000.f);
-      // Рендеринг объектов
-      glUseProgram(shaderProgram);
-      GLint locView = glGetUniformLocation(shaderProgram,"view");
-      GLint locProj = glGetUniformLocation(shaderProgram,"projection");
-      glUniformMatrix4fv(locView,1,false,&view[0][0]);
-      glUniformMatrix4fv(locProj,1,false,&projection[0][0]);
-// Установка uniform-параметров освещения
-GLint locLightPos = glGetUniformLocation(shaderProgram, "lightPos");
-GLint locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
-//glUseProgram(shaderProgram);
-glUniform3f(locLightPos, 10.f, 10.f, 10.f); // позиция источника света
-glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
-      GLint locModel = glGetUniformLocation(shaderProgram,"model");
-      GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
-
-      glBindVertexArray(cubeVAO);
-      for (auto &o : objects) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects1) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects2) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects3) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
+    }
+    // Камера
+    glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+    glm::mat4 projection =
+      glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
 
 
-      for (auto &o : objects4) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects5) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects6) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+// Размер viewport для depth карты
+glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
+glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+glClear(GL_DEPTH_BUFFER_BIT);
 
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
-      for (auto &o : objects7) {
-	if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-	else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+// Используем шейдер для depth
+glUseProgram(shaderDepthProgram);
 
-	// Перед отрисовкой
-	glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-	glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-	model = glm::scale(model, scaleVal);
-	glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-	glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-	glDrawArrays(GL_TRIANGLES,0,36);
-      }
+// Создаем матрицу света
+glm::mat4 lightProjection, lightView;
+int near_plane = 1.0f, far_plane = 2000.0f;
+ lightProjection = glm::ortho(-CXX, CXX, -CXX, CXX,near_plane,far_plane);//
+lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+glm::mat4 lightSpaceMatrix = lightProjection * lightView;
 
-      
-      glBindVertexArray(0);
+// Передача матрицы в шейдер
+glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
 
-      glfwSwapBuffers(window);
-      glfwPollEvents();
+// Отрисовка всех объектов сцены
+for (auto &o : objects) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+}
+// Аналогично для всех объектов сцен
+    for (auto &o : objects1) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+    for (auto &o : objects2) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+    for (auto &o : objects3) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
     }
 
-    delete bvhRoot;
-    delete bvhRoot1;
-    delete bvhRoot2;
-    delete bvhRoot3;
-    delete bvhRoot4;
-    delete bvhRoot5;
-    delete bvhRoot6;
-    delete bvhRoot7;
-    glDeleteBuffers(1,&cubeVBO);
-    glDeleteVertexArrays(1,&cubeVAO);
-    glDeleteProgram(shaderProgram);
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    return 0;
+
+    for (auto &o : objects4) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+    for (auto &o : objects5) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+    for (auto &o : objects6) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+    for (auto &o : objects7) {
+    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+    glBindVertexArray(cubeVAO);
+    glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+// Окончание рендеринга в depth карту
+glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+
+
+
+
+      
+    // Рендеринг объектов
+    glUseProgram(shaderProgram);
+// Устанавливаем viewport для финального изображения
+glViewport(0, 0, wi, he);
+glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+glUseProgram(shaderProgram);
+
+// Передача матрицы светового пространства
+glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+// Передача depth карты
+glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_2D, depthMap);
+glUniform1i(glGetUniformLocation(shaderProgram, "shadowMap"), 0);
+
+    GLint locView = glGetUniformLocation(shaderProgram,"view");
+    GLint locProj = glGetUniformLocation(shaderProgram,"projection");
+    glUniformMatrix4fv(locView,1,false,&view[0][0]);
+    glUniformMatrix4fv(locProj,1,false,&projection[0][0]);
+    // Установка uniform-параметров освещения
+    GLint locLightPos = glGetUniformLocation(shaderProgram, "lightPos");
+    GLint locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
+    //glUseProgram(shaderProgram);
+    glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), lightPos.x, lightPos.y, lightPos.z);
+    glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
+    GLint locModel = glGetUniformLocation(shaderProgram,"model");
+    GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
+
+    glBindVertexArray(cubeVAO);
+    for (auto &o : objects) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects1) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects2) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects3) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+
+
+    for (auto &o : objects4) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects5) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects6) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    for (auto &o : objects7) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+    glBindVertexArray(0);
+ 
+    glfwSwapBuffers(window);
+    glfwPollEvents();
+  }
+
+  delete bvhRoot;
+  delete bvhRoot1;
+  delete bvhRoot2;
+  delete bvhRoot3;
+  delete bvhRoot4;
+  delete bvhRoot5;
+  delete bvhRoot6;
+  delete bvhRoot7;
+  glDeleteBuffers(1,&cubeVBO);
+  glDeleteVertexArrays(1,&cubeVAO);
+  glDeleteProgram(shaderProgram);
+  glfwDestroyWindow(window);
+  glfwTerminate();
+  return 0;
 }
 
 // process all input: query GLFW whether relevant keys are pressed/released this
@@ -854,23 +1033,23 @@ glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
 bool escPressedLastFrame = false;
 void processInput(GLFWwindow *window)
 {
-    // Обработка ESC
-    int escState = glfwGetKey(window, GLFW_KEY_ESCAPE);
-    if (escState == GLFW_PRESS && !escPressedLastFrame) {
-        // Первое нажатие
-        escPressedLastFrame = true;
-        if (mousetoogle) {
-            //
-            mousetoogle = false;
-            glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-        } else {
-            // Закрыть окно
-            glfwSetWindowShouldClose(window, true);
-        }
-    } else if (escState == GLFW_RELEASE) {
-        // Освободить флаг
-        escPressedLastFrame = false;
+  // Обработка ESC
+  int escState = glfwGetKey(window, GLFW_KEY_ESCAPE);
+  if (escState == GLFW_PRESS && !escPressedLastFrame) {
+    // Первое нажатие
+    escPressedLastFrame = true;
+    if (mousetoogle) {
+      //
+      mousetoogle = false;
+      glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+    } else {
+      // Закрыть окно
+      glfwSetWindowShouldClose(window, true);
     }
+  } else if (escState == GLFW_RELEASE) {
+    // Освободить флаг
+    escPressedLastFrame = false;
+  }
   float cameraSpeed = static_cast<float>(20.5 * deltaTime);
   if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
     cameraPos += cameraSpeed * cameraFront;
@@ -901,9 +1080,9 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
     float ypos = static_cast<float>(yposIn);
 
     if (firstMouse) {
-        lastX = xpos;
-        lastY = ypos;
-        firstMouse = false;
+      lastX = xpos;
+      lastY = ypos;
+      firstMouse = false;
     }
 
     float xoffset = xpos - lastX;
@@ -920,9 +1099,9 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
 
     // make sure that when pitch is out of bounds, screen doesn't get flipped
     if (pitch > 89.0f)
-        pitch = 89.0f;
+      pitch = 89.0f;
     if (pitch < -89.0f)
-        pitch = -89.0f;
+      pitch = -89.0f;
 
     glm::vec3 front;
     front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
@@ -937,19 +1116,19 @@ bool mouseButtonLastState = false;
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
-        if (action == GLFW_PRESS && !mouseButtonLastState) {
-            // Первое нажатие
-            mouseButtonLastState = true;
+    if (action == GLFW_PRESS && !mouseButtonLastState) {
+      // Первое нажатие
+      mouseButtonLastState = true;
 
-            if (!mousetoogle) {
-              //
+      if (!mousetoogle) {
+	//
 	      
-                mousetoogle = true;
-                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-            } 
-        } else if (action == GLFW_RELEASE) {
-            // Освободить флаг при отпускании
-            mouseButtonLastState = false;
-        }
+	mousetoogle = true;
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+      } 
+    } else if (action == GLFW_RELEASE) {
+      // Освободить флаг при отпускании
+      mouseButtonLastState = false;
     }
+  }
 }
