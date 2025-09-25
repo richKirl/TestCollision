@@ -19,7 +19,7 @@
 // --- Структуры объектов и BVH ---
 #define CXX 100 // step
 #define tCXX 2*CXX
-#define tN 300
+#define tN 3000
 int wi=800;
 int he=600;
 struct Object3D {
@@ -143,7 +143,7 @@ float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
     if (relativeVelocity > 0) return; // объекты удаляются друг от друга
 
     // Расчет импульса
-    float restitution = 0.9f; // коэффициент восстановления, 1 — идеально упругий
+    float restitution = 0.1f; // коэффициент восстановления, 1 — идеально упругий
     float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
 
     glm::vec3 impulse = impulseMag * collisionNormal;
@@ -165,10 +165,10 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
         //   obj->collided = true;
         // }
         if (other->stayObj) {
-          // resolveCollision(*obj,*other);
-          // other->velocity *= -1;
+          //resolveCollision(*obj,*other);
+          //other->velocity *= -1;
 	  obj->velocity *= -1;
-          other->collided = true;
+          //other->collided = true;
         }
 	else{
         resolveCollision(*obj, *other);
@@ -527,9 +527,9 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
     objects.push_back(Object3D{
 	glm::vec3(x+v.x, y+v.y, z+v.z),
 	glm::vec3(x, y, z),
-	{((rand() % 100) / 100.0f - 0.5f) * .1f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .1f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .1f},
+	{((rand() % 100) / 100.0f - 0.5f) * .51f,
+	 ((rand() % 100) / 100.0f - 0.5f) * .51f,
+	 ((rand() % 100) / 100.0f - 0.5f) * .51f},
 	1.0f,
 	glm::vec3(1.f),
 	glm::vec3(0.f),
