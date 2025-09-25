@@ -24,3 +24,6 @@ bigCube 400v*8 (in BigCube 300 small cubes) ~9-10% CPU (low-medium i7)
 
 80 000 cubes
 <img width="1877" height="998" alt="image" src="https://github.com/user-attachments/assets/e586abaf-5752-4ce9-a027-c5c6e6956616" />
+
+240 000 cubes
+<img width="1877" height="998" alt="image" src="https://github.com/user-attachments/assets/326c610d-7e79-451f-8017-abf1c4f9f0ab" />
