@@ -127,19 +127,53 @@ bool checkCollision(const Object3D& a, const Object3D& b) {
 }
 
 
+void resolveCollision(Object3D& a, Object3D& b) {
+    // Предположим, что масса обратно пропорциональна объему
+    //float massA = a.isSphere ? glm::length(a.radius) : glm::length(a.size);
+    //float massB = b.isSphere ? glm::length(b.radius) : glm::length(b.size);
+
+float massA = a.stayObj ? 1e9f : glm::length(a.isSphere ? a.radius : a.size);
+float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
+
+  
+    // Вектор столкновения
+    glm::vec3 collisionNormal = glm::normalize(b.position - a.position);
+    float relativeVelocity = glm::dot(b.velocity - a.velocity, collisionNormal);
+
+    if (relativeVelocity > 0) return; // объекты удаляются друг от друга
+
+    // Расчет импульса
+    float restitution = 0.9f; // коэффициент восстановления, 1 — идеально упругий
+    float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
+
+    glm::vec3 impulse = impulseMag * collisionNormal;
+
+    if (!a.stayObj) a.velocity -= (1/massA) * impulse;
+    if (!b.stayObj) b.velocity += (1/massB) * impulse;
+}
+
+
 void traverseBVH(BVHNode* node, Object3D* obj) {
   if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
 					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
   if (node->isLeaf()) {
     for (auto* other : node->objects) {
       if (other != obj && checkCollision(*obj, *other)) {
-	if (!obj->stayObj) {
+        // if (!obj->stayObj) {
+        //   //resolveCollision(*obj,*other);
+        //   obj->velocity *= -1;
+        //   obj->collided = true;
+        // }
+        if (other->stayObj) {
+          // resolveCollision(*obj,*other);
+          // other->velocity *= -1;
 	  obj->velocity *= -1;
-	  obj->collided = true;
-	}
-	if (!other->stayObj) {
-	  other->velocity *= -1;
-	  other->collided = true;
+          other->collided = true;
+        }
+	else{
+        resolveCollision(*obj, *other);
+        obj->collided = true;
+        other->collided = true;
 	}
       }
     }
@@ -300,6 +334,38 @@ GLuint createProgram(const char* a,const char* b) {
   glDeleteShader(fShader);
   return prog;
 }
+
+
+
+void createDBuffer(  GLuint &depthMapFBO, GLuint &depthMap,const unsigned int SHADOW_WIDTH = 1024, const unsigned int  SHADOW_HEIGHT = 1024){
+  glGenFramebuffers(1, &depthMapFBO);
+
+  // Создать текстуру для depth
+  
+  glGenTextures(1, &depthMap);
+  glBindTexture(GL_TEXTURE_2D, depthMap);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  float borderColor[] = {1.0, 1.0, 1.0, 1.0};
+  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+
+  // Attach depth texture to FBO
+  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
+  glDrawBuffer(GL_NONE);
+  glReadBuffer(GL_NONE);
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+
+
+
+
+
+
 
 
 
@@ -548,6 +614,156 @@ void createVAOVBObufs(GLuint &cubeVAO, GLuint &cubeVBO) {
 }
 glm::vec3 lightPos = glm::vec3(200.0f, 400.0f, 200.0f);
 float angle = 0.0f; // угол для движения по окружности
+
+
+
+
+void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
+    for (auto& o : objects) {
+        o.collided = false;
+        if (!o.stayObj) {
+            o.position += o.velocity;
+            traverseBVH(bvhRoot, &o);
+            // Можно добавить ограничение по границам сцены
+            // например, чтобы объекты не выходили за рамки
+        }
+    }
+}
+
+
+void RObjects(std::vector<Object3D>& objects,GLuint cubeVAO,GLuint shaderDepthProgram) {
+    // Отрисовка всех объектов сцены
+    for (auto &o : objects) {
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+      glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+      glBindVertexArray(cubeVAO);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+    }
+}
+
+
+
+void renderShadow(GLuint shaderDepthProgram, GLuint depthMapFBO, GLuint cubeVAO,
+		  std::vector<Object3D> &objects,
+                  std::vector<Object3D> &objects1,
+                  std::vector<Object3D> &objects2,
+                  std::vector<Object3D> &objects3,
+                  std::vector<Object3D> &objects4,
+                  std::vector<Object3D> &objects5,
+                  std::vector<Object3D> &objects6,
+                  std::vector<Object3D>& objects7,glm::mat4 &lightSpaceMatrix) {
+    // Размер viewport для depth карты
+    glViewport(0, 0, wi, he);
+    glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+    glClear(GL_DEPTH_BUFFER_BIT);
+
+    // Используем шейдер для depth
+    glUseProgram(shaderDepthProgram);
+
+    // Создаем матрицу света
+    glm::mat4 lightProjection, lightView;
+    int near_plane = 1.0f, far_plane = 2000.0f;
+    lightProjection = glm::ortho(-CXX, CXX, -CXX, CXX,near_plane,far_plane);//
+    lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    lightSpaceMatrix = lightProjection * lightView;
+
+    // Передача матрицы в шейдер
+    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+    RObjects(objects,cubeVAO,shaderDepthProgram);
+    RObjects(objects1, cubeVAO, shaderDepthProgram);
+    RObjects(objects2, cubeVAO, shaderDepthProgram);
+    RObjects(objects3, cubeVAO, shaderDepthProgram);
+    RObjects(objects4, cubeVAO, shaderDepthProgram);
+    RObjects(objects5, cubeVAO, shaderDepthProgram);
+    RObjects(objects6, cubeVAO, shaderDepthProgram);
+    RObjects(objects7,cubeVAO,shaderDepthProgram);
+
+    // Окончание рендеринга в depth карту
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+
+
+void RObjects(std::vector<Object3D>& objects,GLuint cubeVAO,GLint locModel,GLint locColor) {
+    for (auto &o : objects) {
+      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
+}
+
+
+void RenderObjsMain(GLuint shaderProgram, GLuint depthMap, GLuint cubeVAO,
+                    glm::mat4 lightSpaceMatrix, glm::mat4 view,
+                    glm::mat4 projection,
+                  std::vector<Object3D> &objects,
+                  std::vector<Object3D> &objects1,
+                  std::vector<Object3D> &objects2,
+                  std::vector<Object3D> &objects3,
+                  std::vector<Object3D> &objects4,
+                  std::vector<Object3D> &objects5,
+                  std::vector<Object3D> &objects6,
+                  std::vector<Object3D>& objects7) {
+    // Рендеринг объектов
+    glUseProgram(shaderProgram);
+    // Устанавливаем viewport для финального изображения
+    glViewport(0, 0, wi, he);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    glUseProgram(shaderProgram);
+
+    // Передача матрицы светового пространства
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+    // Передача depth карты
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, depthMap);
+    glUniform1i(glGetUniformLocation(shaderProgram, "shadowMap"), 0);
+
+    GLint locView = glGetUniformLocation(shaderProgram,"view");
+    GLint locProj = glGetUniformLocation(shaderProgram,"projection");
+    glUniformMatrix4fv(locView,1,false,&view[0][0]);
+    glUniformMatrix4fv(locProj,1,false,&projection[0][0]);
+    // Установка uniform-параметров освещения
+    GLint locLightPos = glGetUniformLocation(shaderProgram, "lightPos");
+    GLint locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
+    //glUseProgram(shaderProgram);
+    glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), lightPos.x, lightPos.y, lightPos.z);
+    glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
+    GLint locModel = glGetUniformLocation(shaderProgram,"model");
+    GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
+
+    glBindVertexArray(cubeVAO);
+    RObjects(objects,cubeVAO,locModel,locColor);
+    RObjects(objects1, cubeVAO, locModel, locColor);
+    RObjects(objects2, cubeVAO, locModel, locColor);
+    RObjects(objects3, cubeVAO, locModel, locColor);
+    RObjects(objects4, cubeVAO, locModel, locColor);
+    RObjects(objects5, cubeVAO, locModel, locColor);
+    RObjects(objects6, cubeVAO, locModel, locColor);
+    RObjects(objects7,cubeVAO,locModel,locColor);
+
+    glBindVertexArray(0);
+}
+
+
+
+
+
+
+
+
+
+
 int main() {
   srand(time(nullptr));
   // Инициализация GLFW
@@ -578,28 +794,10 @@ int main() {
 
 
   GLuint depthMapFBO;
-  const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
-  glGenFramebuffers(1, &depthMapFBO);
-
-  // Создать текстуру для depth
   GLuint depthMap;
-  glGenTextures(1, &depthMap);
-  glBindTexture(GL_TEXTURE_2D, depthMap);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_WIDTH, SHADOW_HEIGHT, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-  float borderColor[] = {1.0, 1.0, 1.0, 1.0};
-  glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+  const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
 
-  // Attach depth texture to FBO
-  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-  glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
-  glDrawBuffer(GL_NONE);
-  glReadBuffer(GL_NONE);
-  glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
+  createDBuffer(depthMapFBO,depthMap);
     
 
   // Создаем объекты
@@ -710,79 +908,16 @@ int main() {
     glClearColor(0.1f,0.1f,0.15f,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
-    // posB1+= velB1;
-    // //objects[30].position += velB1;
-    // objects[30].position += velB1;
-    // objects[31].position += velB1;
-    // objects[32].position += velB1;
-    // objects[33].position += velB1;
-    // objects[34].position += velB1;
-    // objects[35].position += velB1;
-      
-    // Проверка столкновений
-    for (auto &o : objects) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects1) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot1, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects2) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot2, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects3) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot3, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects4) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot4, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects5) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot5, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects6) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot6, &o);
-      }
-    }
-    // Проверка столкновений
-    for (auto &o : objects7) {
-      o.collided=false;
-      if (!o.stayObj) {
-	o.position += o.velocity;
-	traverseBVH(bvhRoot7, &o);
-      }
-    }
+updateObjects(objects, bvhRoot);
+updateObjects(objects1, bvhRoot1);
+updateObjects(objects2, bvhRoot2);
+updateObjects(objects3, bvhRoot3);
+updateObjects(objects4, bvhRoot4);
+updateObjects(objects5, bvhRoot5);
+updateObjects(objects6, bvhRoot6);
+updateObjects(objects7, bvhRoot7);
+    // // Проверка столкновений
+
     // Камера
     glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
     glm::mat4 projection =
@@ -790,222 +925,34 @@ int main() {
 
 
 
-
-// Размер viewport для depth карты
-glViewport(0, 0, SHADOW_WIDTH, SHADOW_HEIGHT);
-glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-glClear(GL_DEPTH_BUFFER_BIT);
-
-// Используем шейдер для depth
-glUseProgram(shaderDepthProgram);
-
-// Создаем матрицу света
-glm::mat4 lightProjection, lightView;
-int near_plane = 1.0f, far_plane = 2000.0f;
- lightProjection = glm::ortho(-CXX, CXX, -CXX, CXX,near_plane,far_plane);//
-lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-glm::mat4 lightSpaceMatrix = lightProjection * lightView;
-
-// Передача матрицы в шейдер
-glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
-
-// Отрисовка всех объектов сцены
-for (auto &o : objects) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-}
-// Аналогично для всех объектов сцен
-    for (auto &o : objects1) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-    for (auto &o : objects2) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-    for (auto &o : objects3) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-
-
-    for (auto &o : objects4) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-    for (auto &o : objects5) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-    for (auto &o : objects6) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-    for (auto &o : objects7) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    }
-// Окончание рендеринга в depth карту
-glBindFramebuffer(GL_FRAMEBUFFER, 0);
+glm::mat4 lightSpaceMatrix;
+renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
+		  objects,
+                  objects1,
+                  objects2,
+                  objects3,
+                  objects4,
+                  objects5,
+                  objects6,
+	     objects7,lightSpaceMatrix);
 
 
 
+ RenderObjsMain(shaderProgram, depthMap, cubeVAO,
+                    lightSpaceMatrix, view,
+                    projection,
+                  objects,
+                  objects1,
+                  objects2,
+                  objects3,
+                  objects4,
+                  objects5,
+                  objects6,
+		objects7);
 
 
       
-    // Рендеринг объектов
-    glUseProgram(shaderProgram);
-// Устанавливаем viewport для финального изображения
-glViewport(0, 0, wi, he);
-glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-glUseProgram(shaderProgram);
-
-// Передача матрицы светового пространства
-glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
-
-// Передача depth карты
-glActiveTexture(GL_TEXTURE0);
-glBindTexture(GL_TEXTURE_2D, depthMap);
-glUniform1i(glGetUniformLocation(shaderProgram, "shadowMap"), 0);
-
-    GLint locView = glGetUniformLocation(shaderProgram,"view");
-    GLint locProj = glGetUniformLocation(shaderProgram,"projection");
-    glUniformMatrix4fv(locView,1,false,&view[0][0]);
-    glUniformMatrix4fv(locProj,1,false,&projection[0][0]);
-    // Установка uniform-параметров освещения
-    GLint locLightPos = glGetUniformLocation(shaderProgram, "lightPos");
-    GLint locViewPos = glGetUniformLocation(shaderProgram, "viewPos");
-    //glUseProgram(shaderProgram);
-    glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), lightPos.x, lightPos.y, lightPos.z);
-    glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
-    GLint locModel = glGetUniformLocation(shaderProgram,"model");
-    GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
-
-    glBindVertexArray(cubeVAO);
-    for (auto &o : objects) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects1) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects2) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects3) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-
-
-    for (auto &o : objects4) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects5) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects6) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    for (auto &o : objects7) {
-      if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-      else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-      // Перед отрисовкой
-      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-      model = glm::scale(model, scaleVal);
-      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
-      glDrawArrays(GL_TRIANGLES,0,36);
-    }
-    glBindVertexArray(0);
  
     glfwSwapBuffers(window);
     glfwPollEvents();
