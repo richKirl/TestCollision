@@ -26,7 +26,7 @@ int wi=800;
 int he = 600;
 
 
-
+bool teleportationSTATUS=false;
 
 struct Object3D {
   glm::vec3 position;
@@ -1182,7 +1182,14 @@ createDescriptor(dVAO,dVBO,dEBO);
   
   // Основной цикл
     while (!glfwWindowShouldClose(window)) {
-    // Камера
+      // Камера
+      if(teleportationSTATUS){
+	if (selectedObject != nullptr) {
+	  // Телепортируемся
+	  cameraPos = selectedObject->position + glm::vec3(0, 2, 5); // смещение для обзора
+	  cameraFront = glm::normalize(selectedObject->position - cameraPos);
+	}
+      }
     view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
     glm::mat4 projection =
     glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
@@ -1312,7 +1319,12 @@ void processInput(GLFWwindow *window)
   if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
     cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
   if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-    cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    cameraPos +=
+        glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+  // В функции обработки клавиш (например, в processInput):
+if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
+  if(teleportationSTATUS==false)teleportationSTATUS=true;
+}
 }
 
 // glfw: whenever the window size changed (by OS or user resize) this callback function executes
