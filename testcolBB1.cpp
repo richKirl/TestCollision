@@ -23,7 +23,11 @@
 #define tCXX 2*CXX
 #define tN 1000
 int wi=800;
-int he=600;
+int he = 600;
+
+
+
+
 struct Object3D {
   glm::vec3 position;
   glm::vec3 prevpos;
@@ -37,6 +41,9 @@ struct Object3D {
   glm::vec3 NormalWall;//(1, 0, 0)
   std::string name;
 };
+
+
+
 
 struct AABB {
   glm::vec3 min, max;
@@ -61,6 +68,7 @@ struct AABB {
   }
 };
 
+
 struct BVHNode {
   AABB box;
   BVHNode* left = nullptr;
@@ -72,6 +80,66 @@ struct BVHNode {
     delete right;
   }
 };
+
+
+glm::mat4 view;
+glm::mat4 projection;
+// И также глобальные переменные для хранения результата
+Object3D* selectedObject = nullptr;
+float rayDistance = FLT_MAX;
+BVHNode* bvhRoot;
+std::vector<Object3D> objects;
+// Создание луча
+struct Ray {
+  glm::vec3 origin;
+  glm::vec3 direction;
+  glm::vec3 invDirection;
+};
+
+Ray CreateRay(const glm::vec3& p1, const glm::vec3& p2)
+{
+    glm::vec3 dir = p2 - p1;
+    glm::vec3 invDir;
+    invDir.x = (fabs(dir.x) > 1e-8) ? 1.0f / dir.x : FLT_MAX;
+    invDir.y = (fabs(dir.y) > 1e-8) ? 1.0f / dir.y : FLT_MAX;
+    invDir.z = (fabs(dir.z) > 1e-8) ? 1.0f / dir.z : FLT_MAX;
+    return {p1, dir, invDir};
+}
+
+
+// Проверка пересечения луча с AABB
+bool RayCast(const AABB& box, const Ray& ray)
+{
+    float tmin = -FLT_MAX;
+    float tmax = FLT_MAX;
+
+    for (int i = 0; i < 3; ++i)
+    {
+        float invD = (i == 0) ? ray.invDirection.x : (i == 1) ? ray.invDirection.y : ray.invDirection.z;
+        float originComponent = (i == 0) ? ray.origin.x : (i == 1) ? ray.origin.y : ray.origin.z;
+        float minB = (i == 0) ? box.min.x : (i == 1) ? box.min.y : box.min.z;
+        float maxB = (i == 0) ? box.max.x : (i == 1) ? box.max.y : box.max.z;
+
+        if (invD == FLT_MAX) // параллельно оси
+        {
+            if (originComponent < minB || originComponent > maxB)
+                return false;
+        }
+        else
+        {
+            float t0 = (minB - originComponent) * invD;
+            float t1 = (maxB - originComponent) * invD;
+            if (invD < 0.0f) std::swap(t0, t1);
+            tmin = std::max(tmin, t0);
+            tmax = std::min(tmax, t1);
+            if (tmax < tmin)
+                return false;
+        }
+    }
+    return true;
+}
+
+
 
 BVHNode* buildBVH(std::vector<Object3D*>& objs, int depth=0) {
   BVHNode* node = new BVHNode();
@@ -131,28 +199,26 @@ bool checkCollision(const Object3D& a, const Object3D& b) {
 
 
 void resolveCollision(Object3D& a, Object3D& b) {
-    // Предположим, что масса обратно пропорциональна объему
-    //float massA = a.isSphere ? glm::length(a.radius) : glm::length(a.size);
-    //float massB = b.isSphere ? glm::length(b.radius) : glm::length(b.size);
+  // Предположим, что масса обратно пропорциональна объему
 
-float massA = a.stayObj ? 1e9f : glm::length(a.isSphere ? a.radius : a.size);
-float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
+  float massA = a.stayObj ? 1e9f : glm::length(a.isSphere ? a.radius : a.size);
+  float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
 
   
-    // Вектор столкновения
-    glm::vec3 collisionNormal = glm::normalize(b.position - a.position);
-    float relativeVelocity = glm::dot(b.velocity - a.velocity, collisionNormal);
+  // Вектор столкновения
+  glm::vec3 collisionNormal = glm::normalize(b.position - a.position);
+  float relativeVelocity = glm::dot(b.velocity - a.velocity, collisionNormal);
 
-    if (relativeVelocity > 0) return; // объекты удаляются друг от друга
+  if (relativeVelocity > 0) return; // объекты удаляются друг от друга
 
-    // Расчет импульса
-    float restitution = 0.1f; // коэффициент восстановления, 1 — идеально упругий
-    float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
+  // Расчет импульса
+  float restitution = 0.1f; // коэффициент восстановления, 1 — идеально упругий
+  float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
 
-    glm::vec3 impulse = impulseMag * collisionNormal;
+  glm::vec3 impulse = impulseMag * collisionNormal;
 
-    if (!a.stayObj) a.velocity -= (1/massA) * impulse;
-    if (!b.stayObj) b.velocity += (1/massB) * impulse;
+  if (!a.stayObj) a.velocity -= (1/massA) * impulse;
+  if (!b.stayObj) b.velocity += (1/massB) * impulse;
 }
 
 
@@ -169,27 +235,14 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
   if (node->isLeaf()) {
     for (auto* other : node->objects) {
       if (other != obj && checkCollision(*obj, *other)) {
-        // if (!obj->stayObj) {
-        //   //resolveCollision(*obj,*other);
-        //   obj->velocity *= -1;
-        //   obj->collided = true;
-        // }
         if (other->stayObj) {
-          // resolveCollision(*obj,*other);
-          //other->velocity *= -1;
           obj->velocity *= -1;
-// glm::vec3 halfSize = obj->size * 0.5f;
-// float offset = glm::dot(halfSize, glm::abs(other->NormalWall)) + 0.001f;
-// obj->position = other->position + other->NormalWall * offset;
-          //reflectVelocity(*obj, other->NormalWall);
-	  //obj->velocity = -obj->velocity;
 	  obj->collided = true;
-          //other->collided = true;
         }
 	else{
 	  resolveCollision(*obj, *other);
-        obj->collided = true;
-        other->collided = true;
+	  obj->collided = true;
+	  other->collided = true;
 	}
       }
     }
@@ -198,6 +251,7 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
     traverseBVH(node->right, obj);
   }
 }
+
 
 // --- Шейдеры ---
 
@@ -755,7 +809,12 @@ void RObjects(std::vector<Object3D>& objects,GLuint cubeVAO,GLint locModel,GLint
       glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
       model = glm::scale(model, scaleVal);
       glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-      glUniform3f(locColor, o.collided ? 1.f:0.f, 0.f, o.collided ? 0.f : 1.f);
+        // Проверка, выбран ли объект
+        if (&o == selectedObject) {
+            glUniform3f(locColor, 0.0f, 1.0f, 0.0f); // Зеленый
+        } else {
+            glUniform3f(locColor, o.collided ? 1.f : 0.f, 0.f, o.collided ? 0.f : 1.f); // исходный цвет
+        }
       glDrawArrays(GL_TRIANGLES,0,36);
     }
 }
@@ -902,6 +961,67 @@ glBindVertexArray(0);
 
 
 
+
+
+void pickObject(double mouseX, double mouseY, std::vector<Object3D>& objects, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
+    // 1. Нормализованные координаты
+    float xNDC = (mouseX / wi) * 2.0f - 1.0f;
+    float yNDC = 1.0f - (mouseY / he) * 2.0f;
+
+    // 2. Создайте точку в NDC у Near plane
+    glm::vec4 clipCoords = glm::vec4(xNDC, yNDC, -1.0f, 1.0f);
+    glm::mat4 invVP = glm::inverse(projection * view);
+    glm::vec4 worldCoords = invVP * clipCoords;
+    worldCoords /= worldCoords.w;
+
+    // 3. Создать луч
+    glm::vec3 rayOrigin = cameraPos;
+    glm::vec3 rayDir = glm::normalize(glm::vec3(worldCoords) - rayOrigin)*200.0f;
+    glm::vec3 temp = cameraFront*20000.f;
+    Ray ray=CreateRay(cameraPos, temp);
+
+
+    // 4. Проверка пересечений
+    float closestDist = FLT_MAX;
+    //Object3D *selectedObj = nullptr;
+    //selectedObject = nullptr;
+    for (auto& obj : objects) {
+        // Создаем AABB объекта
+        AABB aabb;
+        if (obj.isSphere) {
+            aabb.min = obj.position - glm::vec3(obj.radius);
+            aabb.max = obj.position + glm::vec3(obj.radius);
+        } else {
+            aabb.min = obj.position - glm::vec3(obj.size * 0.5f);
+            aabb.max = obj.position + glm::vec3(obj.size * 0.5f);
+        }
+
+        if (RayCast(aabb, ray)) {
+          // Можно дополнительно проверить точное пересечение с мешем, но для
+          // выбора достаточно AABB Оцените "расстояние" до объекта — например,
+          // по расстоянию от origin до точки пересечения Для простоты можно
+          // считать, что ближайший объект — это тот, у которого t минимальный
+          // Но t внутри RayCast не возвращается, нужно расширить функцию для
+          // этого Для этого лучше переписать RayCast так, чтобы возвращал t или
+          // false
+          selectedObject = &obj;
+	  return;
+        }
+	else { selectedObject = nullptr; }
+    }
+
+    // Вариант: перепишем RayCast, чтобы он возвращал t
+    // или создадим отдельную функцию для проверки пересечения и получения t
+}
+
+
+
+
+
+
+
+
+
 int main() {
   srand(time(nullptr));
   // Инициализация GLFW
@@ -963,7 +1083,7 @@ createDescriptor(dVAO,dVBO,dEBO);
     }
 
   // Создаем объекты
-  std::vector<Object3D> objects;
+  
   glm::vec3 v=glm::vec3{0,0,0};
   createOneBigCubeCoords(objects, v);
     
@@ -1008,7 +1128,7 @@ createDescriptor(dVAO,dVBO,dEBO);
   // Построение BVH
   std::vector<Object3D*> objPtrs;
   for (auto& o: objects) objPtrs.push_back(&o);
-  BVHNode* bvhRoot = buildBVH(objPtrs);
+  bvhRoot = buildBVH(objPtrs);
 
   // Построение BVH
   std::vector<Object3D*> objPtrs1;
@@ -1063,7 +1183,7 @@ createDescriptor(dVAO,dVBO,dEBO);
   // Основной цикл
     while (!glfwWindowShouldClose(window)) {
     // Камера
-    glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+    view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
     glm::mat4 projection =
     glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
     glm::mat4 Oproj = glm::ortho(0.0f, float(wi), 0.0f, float(he),-1.f,1.f);
@@ -1124,6 +1244,9 @@ renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
                   objects6,
 		objects7);
 
+
+
+ //like help-UI draw(ortho)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
@@ -1244,8 +1367,7 @@ void mouse_callback(GLFWwindow *window, double xposIn, double yposIn) {
 
 
 bool mouseButtonLastState = false;
-void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
-{
+void mouse_button_callback(GLFWwindow* window, int button, int action, int mods){
   if (button == GLFW_MOUSE_BUTTON_LEFT) {
     if (action == GLFW_PRESS && !mouseButtonLastState) {
       // Первое нажатие
@@ -1256,8 +1378,13 @@ void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 	      
 	mousetoogle = true;
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
-      } 
-    } else if (action == GLFW_RELEASE) {
+      } else if (mousetoogle) {
+        double xpos, ypos;
+	glfwGetCursorPos(window,&xpos,&ypos);
+	pickObject(xpos, ypos,objects, view, projection,cameraPos);
+      }
+    }
+    else if (action == GLFW_RELEASE) {
       // Освободить флаг при отпускании
       mouseButtonLastState = false;
     }
