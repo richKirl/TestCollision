@@ -15,11 +15,13 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 // --- Структуры объектов и BVH ---
 #define CXX 100 // step
 #define tCXX 2*CXX
-#define tN 3000
+#define tN 1000
 int wi=800;
 int he=600;
 struct Object3D {
@@ -31,7 +33,8 @@ struct Object3D {
   glm::vec3 radius;   // для сферы
   bool isSphere;
   bool collided = false; // для визуализации столкновений
-  bool stayObj=false;
+  bool stayObj = false;
+  glm::vec3 NormalWall;//(1, 0, 0)
   std::string name;
 };
 
@@ -153,6 +156,13 @@ float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
 }
 
 
+
+void reflectVelocity(Object3D& obj, const glm::vec3& normal) {
+  obj.velocity = obj.velocity - 2.0f*glm::dot(obj.velocity, normal)*normal;
+}
+
+
+
 void traverseBVH(BVHNode* node, Object3D* obj) {
   if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
 					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
@@ -165,13 +175,19 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
         //   obj->collided = true;
         // }
         if (other->stayObj) {
-          //resolveCollision(*obj,*other);
+          // resolveCollision(*obj,*other);
           //other->velocity *= -1;
-	  obj->velocity *= -1;
+          obj->velocity *= -1;
+// glm::vec3 halfSize = obj->size * 0.5f;
+// float offset = glm::dot(halfSize, glm::abs(other->NormalWall)) + 0.001f;
+// obj->position = other->position + other->NormalWall * offset;
+          //reflectVelocity(*obj, other->NormalWall);
+	  //obj->velocity = -obj->velocity;
+	  obj->collided = true;
           //other->collided = true;
         }
 	else{
-        resolveCollision(*obj, *other);
+	  resolveCollision(*obj, *other);
         obj->collided = true;
         other->collided = true;
 	}
@@ -294,13 +310,48 @@ void main()
     gl_Position = lightSpaceMatrix * model * vec4(aPos, 1.0);
 }
 )";
-const char* depth_fragment_shader = R"(
+const char *depth_fragment_shader = R"(
 #version 330 core
 void main()
 {
     // ничего не нужно, depth берется автоматически
 }
 )";
+
+//descriptorCentr
+// vertex shader
+const char *vDescriptorCentrSrc = R"(
+#version 460 core
+layout(location = 0) in vec3 aPos;
+layout(location = 1) in vec2 aTexCoord;
+
+uniform mat4 uProjection;
+uniform mat4 uModel;
+
+out vec2 TexCoord;
+
+void main() {
+    gl_Position = uProjection * uModel * vec4(aPos, 1.0);
+    TexCoord = aTexCoord;
+}
+)";
+
+// fragment shader
+const char* fDescriptorCentrSrc = R"(
+#version 460 core
+in vec2 TexCoord;
+layout(location = 0) out vec4 FragColor;
+
+uniform sampler2D uTexture;
+
+void main() {
+        vec4 texel = texture(uTexture,TexCoord);
+	if(texel.a == 0.0)
+		discard;
+	FragColor= texel*vec4(1.0,1.0,1.0,1.0);
+}
+)";
+
 // Компиляция шейдера
 GLuint compileShader(GLenum type, const char* src) {
   GLuint shader=glCreateShader(type);
@@ -444,17 +495,18 @@ void createOneBigCube(std::vector<Object3D>& objects) {
     // кубы
     std::string t="cube";
     objects.push_back(Object3D{
-	glm::vec3(x, y, z),
-	glm::vec3(x, y, z),
-	{((rand() % 100) / 100.0f - 0.5f) * .1f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .1f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .1f},
-	1.0f,
-	glm::vec3(1.f),
-	glm::vec3(0.f),
-	false,
-	true,
-	false,
+        glm::vec3(x, y, z),
+        glm::vec3(x, y, z),
+        {((rand() % 100) / 100.0f - 0.5f) * .1f,
+         ((rand() % 100) / 100.0f - 0.5f) * .1f,
+         ((rand() % 100) / 100.0f - 0.5f) * .1f},
+        1.0f,
+        glm::vec3(1.f),
+        glm::vec3(0.f),
+        false,
+        true,
+        false,
+	glm::vec3(0,0,0),
 	t + std::to_string(i)
       });
   }
@@ -525,17 +577,18 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
     // кубы
     std::string t="cube";
     objects.push_back(Object3D{
-	glm::vec3(x+v.x, y+v.y, z+v.z),
-	glm::vec3(x, y, z),
-	{((rand() % 100) / 100.0f - 0.5f) * .51f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .51f,
-	 ((rand() % 100) / 100.0f - 0.5f) * .51f},
-	1.0f,
-	glm::vec3(1.f),
-	glm::vec3(0.f),
-	false,
-	true,
-	false,
+        glm::vec3(x + v.x, y + v.y, z + v.z),
+        glm::vec3(x, y, z),
+        {((rand() % 100) / 100.0f - 0.5f) * .51f,
+         ((rand() % 100) / 100.0f - 0.5f) * .51f,
+         ((rand() % 100) / 100.0f - 0.5f) * .51f},
+        1.0f,
+        glm::vec3(1.f),
+        glm::vec3(0.f),
+        false,
+        true,
+        false,
+	glm::vec3(0,0,0),
 	t + std::to_string(i)
       });
   }
@@ -547,6 +600,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallLeft.radius =  glm::vec3(0.0f);
   wallLeft.isSphere = false;
   wallLeft.name = "WallLeft";
+  wallLeft.NormalWall = glm::vec3(1,0,0);
   wallLeft.stayObj = true; // статичный объект
 
   Object3D wallRight;
@@ -555,6 +609,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallRight.radius = glm::vec3(0.0f);
   wallRight.isSphere = false;
   wallRight.name = "WallRight";
+  wallLeft.NormalWall = glm::vec3(-1,0,0);
   wallRight.stayObj = true;
 
   Object3D wallTop;
@@ -563,6 +618,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallTop.radius = glm::vec3(0.0f);
   wallTop.isSphere = false;
   wallTop.name = "WallTop";
+  wallLeft.NormalWall = glm::vec3(0,-1,0);
   wallTop.stayObj = true;
 
   Object3D wallBottom;
@@ -571,6 +627,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallBottom.radius = glm::vec3(0.0f);
   wallBottom.isSphere = false;
   wallBottom.name = "WallBottom";
+  wallLeft.NormalWall = glm::vec3(0,1,0);
   wallBottom.stayObj = true;
 
   Object3D wallFront;
@@ -579,6 +636,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallFront.radius = glm::vec3(0.0f);
   wallFront.isSphere = false;
   wallFront.name = "WallFront";
+  wallLeft.NormalWall = glm::vec3(0,0,-1);
   wallFront.stayObj = true;
 
   Object3D wallBack;
@@ -587,6 +645,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
   wallBack.radius = glm::vec3(0.0f);
   wallBack.isSphere = false;
   wallBack.name = "WallBack";
+  wallLeft.NormalWall = glm::vec3(0,0,1);
   wallBack.stayObj = true;
 
   // Добавляем в список объектов
@@ -626,7 +685,7 @@ void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
             traverseBVH(bvhRoot, &o);
             // Можно добавить ограничение по границам сцены
             // например, чтобы объекты не выходили за рамки
-        }
+	}
     }
 }
 
@@ -756,11 +815,90 @@ void RenderObjsMain(GLuint shaderProgram, GLuint depthMap, GLuint cubeVAO,
 }
 
 
+GLuint loadTexture(const char* filename)
+{
+    int width, height, nrChannels;
+    unsigned char *data = stbi_load(filename, &width, &height, &nrChannels, 4); //force RGBA
+    if (!data)
+    {
+        std::cerr << "Failed to load texture: " << filename << std::endl;
+        return 0;
+    }
 
+    GLuint textureID;
+    glGenTextures(1, &textureID);
+    glBindTexture(GL_TEXTURE_2D, textureID);
 
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+    glGenerateMipmap(GL_TEXTURE_2D);
 
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+    stbi_image_free(data);
+    return textureID;
+}
 
+float dvertices[] = {
+    // позиции        // текстурные координаты
+    //  x, y, z       u, v
+    0.5f,  0.5f, 0.0f, 1.0f, 1.0f, // верхний правый
+    0.5f, -0.5f, 0.0f, 1.0f, 0.0f, // нижний правый
+   -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, // нижний левый
+   -0.5f,  0.5f, 0.0f, 0.0f, 1.0f  // верхний левый
+};
+
+int dindices[] = {0, 1, 3, 1, 2, 3};
+void createDescriptor(GLuint &VAO,GLuint &VBO,GLuint &EBO) {
+    // Создаем VAO/VBO/EBO
+    
+glGenVertexArrays(1, &VAO);
+glGenBuffers(1, &VBO);
+glGenBuffers(1, &EBO);
+
+glBindVertexArray(VAO);
+
+glBindBuffer(GL_ARRAY_BUFFER, VBO);
+glBufferData(GL_ARRAY_BUFFER, sizeof(dvertices), dvertices, GL_STATIC_DRAW);
+
+glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(dindices), dindices, GL_STATIC_DRAW);
+
+// позиция
+glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
+glEnableVertexAttribArray(0);
+
+// текстурные координаты
+glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)(3 * sizeof(float)));
+glEnableVertexAttribArray(1);
+
+glBindVertexArray(0);
+}
+
+void drawDescriptor(GLuint dshaderProgram,GLuint textureID,GLuint VAO,glm::mat4 view,glm::mat4 projection) {
+// В основном цикле
+// Установите uniform матрицы проекции
+int projLoc = glGetUniformLocation(dshaderProgram, "uProjection");
+glUseProgram(dshaderProgram);
+glUniformMatrix4fv(projLoc, 1, GL_FALSE, &projection[0][0]);
+
+// Также задайте модельную матрицу, чтобы разместить квадратик
+glm::mat4 model = glm::mat4(1.0f);
+model = glm::translate(model, glm::vec3(wi/2, he/2, 0.0f)); // например, по центру
+model = glm::scale(model, glm::vec3(20.0f, 20.0f, 1.0f)); // размер 100x100 пикселей
+ model = view*model;
+int modelLoc = glGetUniformLocation(dshaderProgram, "uModel");
+glUniformMatrix4fv(modelLoc, 1, GL_FALSE, &model[0][0]);
+glActiveTexture(GL_TEXTURE0);
+glBindTexture(GL_TEXTURE_2D, textureID);
+glUniform1i(glGetUniformLocation(dshaderProgram, "uTexture"), 0);
+
+glBindVertexArray(VAO);
+glDrawElements(GL_TRIANGLE_STRIP, 6, GL_UNSIGNED_INT, 0);
+glBindVertexArray(0);
+}
 
 
 
@@ -784,10 +922,11 @@ int main() {
   if (glewInit()!=GLEW_OK) { std::cerr<<"Glew init failed\n"; return -1; }
 
   glEnable(GL_DEPTH_TEST);
-
+glDepthMask(1);
    
-  GLuint shaderProgram = createProgram(vertexShaderSrc,fragmentShaderSrc);
-  GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc,depth_fragment_shader);
+  GLuint shaderProgram = createProgram(vertexShaderSrc,fragmentShaderSrc);//main
+  GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc, depth_fragment_shader);//shadow
+  
   // VAO/VBO для куба
   GLuint cubeVAO, cubeVBO;
   createVAOVBObufs(cubeVAO, cubeVBO);
@@ -798,7 +937,30 @@ int main() {
   const unsigned int SHADOW_WIDTH = 1024, SHADOW_HEIGHT = 1024;
 
   createDBuffer(depthMapFBO,depthMap);
-    
+
+
+float width = 800.0f;
+float height = 600.0f;
+
+// Размер квадрата в пикселях
+float sizeX = 40.0f;
+float sizeY = 40.0f;
+
+// Центр — например, в центре окна
+float centerX = width / 2.0f;
+float centerY = height / 2.0f;
+
+
+ GLuint DshaderProgram = createProgram(vDescriptorCentrSrc,fDescriptorCentrSrc);//cross
+GLuint dVAO, dVBO, dEBO;
+createDescriptor(dVAO,dVBO,dEBO);
+    // Загружаем текстуру крестика (укажи свой путь)
+    GLuint textureID = loadTexture("descriptorCentr.png");
+    if (textureID == 0)
+    {
+        std::cerr << "Ошибка загрузки текстуры.\n";
+        return -1;
+    }
 
   // Создаем объекты
   std::vector<Object3D> objects;
@@ -889,11 +1051,22 @@ int main() {
     
   glm::vec3 min = {-10, -10, -10};
   glm::vec3 max={10,10,10};
-  glm::vec3 velB1={((rand() % 100) / 100.0f - 0.5f) * 0.01f,
-		   ((rand() % 100) / 100.0f - 0.5f) * 0.01f,
-		   ((rand() % 100) / 100.0f - 0.5f) * 0.01f};
+  glm::vec3 velB1 = {((rand() % 100) / 100.0f - 0.5f) * 0.01f,
+                     ((rand() % 100) / 100.0f - 0.5f) * 0.01f,
+                     ((rand() % 100) / 100.0f - 0.5f) * 0.01f};
+
+
+    // Настройка OpenGL
+
+
+  
   // Основной цикл
-  while (!glfwWindowShouldClose(window)) {
+    while (!glfwWindowShouldClose(window)) {
+    // Камера
+    glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+    glm::mat4 projection =
+    glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
+    glm::mat4 Oproj = glm::ortho(0.0f, float(wi), 0.0f, float(he),-1.f,1.f);
     // per-frame time logic
     // --------------------
     float currentFrame = static_cast<float>(glfwGetTime());
@@ -908,6 +1081,10 @@ int main() {
     glClearColor(0.1f,0.1f,0.15f,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
+
+    
+
+    
 updateObjects(objects, bvhRoot);
 updateObjects(objects1, bvhRoot1);
 updateObjects(objects2, bvhRoot2);
@@ -918,12 +1095,9 @@ updateObjects(objects6, bvhRoot6);
 updateObjects(objects7, bvhRoot7);
     // // Проверка столкновений
 
-    // Камера
-    glm::mat4 view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
-    glm::mat4 projection =
-      glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
 
-
+    
+    
 
 glm::mat4 lightSpaceMatrix;
 renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
@@ -950,9 +1124,11 @@ renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
                   objects6,
 		objects7);
 
-
-      
-
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    drawDescriptor(DshaderProgram,textureID,dVAO,glm::mat4(1.0f),Oproj);
+    glDisable(GL_BLEND);
  
     glfwSwapBuffers(window);
     glfwPollEvents();
@@ -966,6 +1142,14 @@ renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
   delete bvhRoot5;
   delete bvhRoot6;
   delete bvhRoot7;
+  // Очистка ресурсов
+  
+    glDeleteProgram(shaderDepthProgram);
+    glDeleteVertexArrays(1, &dVAO);
+    glDeleteBuffers(1, &dVBO);
+    glDeleteBuffers(1, &dEBO);
+    glDeleteProgram(DshaderProgram);
+    glDeleteTextures(1, &textureID);
   glDeleteBuffers(1,&cubeVBO);
   glDeleteVertexArrays(1,&cubeVAO);
   glDeleteProgram(shaderProgram);
