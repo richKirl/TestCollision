@@ -1,4 +1,4 @@
-#include "glm/ext/matrix_clip_space.hpp"
+#include <glm/ext/matrix_clip_space.hpp>
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
@@ -21,7 +21,7 @@
 // --- Структуры объектов и BVH ---
 #define CXX 100 // step
 #define tCXX 2*CXX
-#define tN 1000
+#define tN 10000
 int wi=800;
 int he = 600;
 
@@ -68,6 +68,22 @@ struct AABB {
   }
 };
 
+AABB getExpandedAABB(const Object3D& obj, float dt) {
+    glm::vec3 startPos = obj.prevpos;
+    glm::vec3 endPos = obj.position;
+    glm::vec3 minPos = glm::min(startPos, endPos);
+    glm::vec3 maxPos = glm::max(startPos, endPos);
+    glm::vec3 size = (maxPos - minPos);
+    // Добавьте радиусы или размеры
+    if (obj.isSphere) {
+        minPos -= glm::vec3(obj.radius);
+        maxPos += glm::vec3(obj.radius);
+    } else {
+        minPos -= glm::vec3(obj.size * 0.5f);
+        maxPos += glm::vec3(obj.size * 0.5f);
+    }
+    return AABB(minPos, maxPos);
+}
 
 struct BVHNode {
   AABB box;
@@ -229,7 +245,9 @@ void reflectVelocity(Object3D& obj, const glm::vec3& normal) {
 
 
 
-void traverseBVH(BVHNode* node, Object3D* obj) {
+void traverseBVH(BVHNode *node, Object3D *obj) {
+//   AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
+// if (!node || !node->box.intersects(aabbExpanded)) return;
   if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
 					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
   if (node->isLeaf()) {
@@ -237,6 +255,7 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
       if (other != obj && checkCollision(*obj, *other)) {
         if (other->stayObj) {
           obj->velocity *= -1;
+	  reflectVelocity(*obj, other->NormalWall);
 	  obj->collided = true;
         }
 	else{
@@ -251,6 +270,9 @@ void traverseBVH(BVHNode* node, Object3D* obj) {
     traverseBVH(node->right, obj);
   }
 }
+
+
+
 
 
 // --- Шейдеры ---
@@ -405,6 +427,53 @@ void main() {
 	FragColor= texel*vec4(1.0,1.0,1.0,1.0);
 }
 )";
+
+
+
+//HDR
+// vertex shader
+const char *vHDRSrc = R"(
+#version 460 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec2 aTexCoords;
+
+out vec2 TexCoords;
+
+void main()
+{
+    TexCoords = aTexCoords;
+    gl_Position = vec4(aPos, 1.0);
+}
+)";
+
+// fragment shader
+const char* fHDRSrc = R"(
+#version 460 core
+out vec4 FragColor;
+
+in vec2 TexCoords;
+
+uniform sampler2D hdrBuffer;
+uniform float exposure; // параметр экспозиции
+
+void main()
+{
+    vec3 hdrColor = texture(hdrBuffer, TexCoords).rgb;
+    // Тонмэппинг (например, Reinhard)
+    vec3 mapped = hdrColor / (hdrColor + vec3(1.0));
+    // Увеличение яркости
+    mapped = vec3(1.0) - exp(-mapped * exposure);
+    FragColor = vec4(mapped, 1.0);
+}
+)";
+
+
+
+
+
+
+
+
 
 // Компиляция шейдера
 GLuint compileShader(GLenum type, const char* src) {
@@ -730,17 +799,131 @@ float angle = 0.0f; // угол для движения по окружност�
 
 
 
+AABB getSweptAABB(const Object3D& obj, const glm::vec3& velocity, float deltaTime) {
+    glm::vec3 startMin, startMax;
+    if (obj.isSphere) {
+        startMin = obj.position - glm::vec3(obj.radius);
+        startMax = obj.position + glm::vec3(obj.radius);
+    } else {
+        startMin = obj.position - glm::vec3(obj.size * 0.5f);
+        startMax = obj.position + glm::vec3(obj.size * 0.5f);
+    }
+
+    glm::vec3 endPos = obj.position + velocity * deltaTime;
+
+    glm::vec3 endMin, endMax;
+    if (obj.isSphere) {
+        endMin = endPos - glm::vec3(obj.radius);
+        endMax = endPos + glm::vec3(obj.radius);
+    } else {
+        endMin = endPos - glm::vec3(obj.size * 0.5f);
+        endMax = endPos + glm::vec3(obj.size * 0.5f);
+    }
+
+    glm::vec3 minCoords = glm::min(startMin, endMin);
+    glm::vec3 maxCoords = glm::max(startMax, endMax);
+
+    return AABB(minCoords, maxCoords);
+}
+
+void checkCollisionsBVH(BVHNode* node, Object3D* obj, float deltaTime) {
+  AABB sweptAABB = getSweptAABB(*obj, obj->velocity, deltaTime);
+  if (!node || !node->box.intersects(sweptAABB)) return;
+
+  if (node->isLeaf()) {
+    for (auto* other : node->objects) {
+      if (other != obj) {
+	// Проверка пересечения AABB
+	AABB otherAABB;
+	if (other->isSphere) {
+	  otherAABB.min = other->position - glm::vec3(other->radius);
+	  otherAABB.max = other->position + glm::vec3(other->radius);
+	} else {
+	  otherAABB.min = other->position - glm::vec3(other->size * 0.5f);
+	  otherAABB.max = other->position + glm::vec3(other->size * 0.5f);
+	}
+
+	if (sweptAABB.intersects(otherAABB)) {
+	  // Обработка столкновения (например, resolveCollision)
+	  if (other->stayObj) {
+	    obj->velocity *= -1;
+	    reflectVelocity(*obj, other->NormalWall);
+	    obj->collided = true;
+	  }
+	  else{
+	    resolveCollision(*obj, *other);
+	    obj->collided = true;
+	    other->collided = true;
+	  }
+	}
+      }
+    }
+  } else {
+    checkCollisionsBVH(node->left, obj, deltaTime);
+    checkCollisionsBVH(node->right, obj, deltaTime);
+  }
+}
+
+
+void traverseBVHR(BVHNode *node, Object3D *obj) {
+  AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
+  if (!node || !node->box.intersects(aabbExpanded)) return;
+  //if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
+  //					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
+  if (node->isLeaf()) {
+    for (auto *other : node->objects) {
+      // Создаем AABB объекта
+      AABB aabb;
+      if (other->isSphere) {
+	aabb.min = other->position - glm::vec3(other->radius);
+	aabb.max = other->position + glm::vec3(other->radius);
+      } else {
+	aabb.min = other->position - glm::vec3(other->size * 0.5f);
+	aabb.max = other->position + glm::vec3(other->size * 0.5f);
+      }
+      glm::vec3 startPos = obj->prevpos;
+      glm::vec3 endPos = obj->position; // текущая позиция
+      //Ray ray = CreateRay(startPos, endPos);
+      Ray ray=CreateRay(obj->position, obj->position+(obj->velocity*20000.0f));
+      if (other != obj && RayCast(aabb, ray)) {
+        if (other->stayObj==true) {
+          obj->velocity *= -1;
+	  //reflectVelocity(*obj, other->NormalWall);
+          obj->collided = true;
+	  break;
+        }
+	else if(other->stayObj==false){
+	  resolveCollision(*obj, *other);
+	  obj->collided = true;
+          other->collided = true;
+	  break;
+        }
+	
+      }
+    }
+  } else {
+    traverseBVH(node->left, obj);
+    traverseBVH(node->right, obj);
+  }
+}
+
+
+
+
+
 
 void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
-    for (auto& o : objects) {
-        o.collided = false;
-        if (!o.stayObj) {
-            o.position += o.velocity;
-            traverseBVH(bvhRoot, &o);
-            // Можно добавить ограничение по границам сцены
-            // например, чтобы объекты не выходили за рамки
-	}
+  for (auto& o : objects) {
+    o.collided = false;
+    if (!o.stayObj) {
+      o.prevpos = o.position; // запомнить позицию перед обновлением
+      o.position += o.velocity;
+      traverseBVHR(bvhRoot, &o);
+      //checkCollisionsBVH(bvhRoot,&o,0.1f);  
+      // Можно добавить ограничение по границам сцены
+      // например, чтобы объекты не выходили за рамки
     }
+  }
 }
 
 
@@ -961,8 +1144,6 @@ glBindVertexArray(0);
 
 
 
-
-
 void pickObject(double mouseX, double mouseY, std::vector<Object3D>& objects, const glm::mat4& view, const glm::mat4& projection, const glm::vec3& cameraPos) {
     // 1. Нормализованные координаты
     float xNDC = (mouseX / wi) * 2.0f - 1.0f;
@@ -976,7 +1157,7 @@ void pickObject(double mouseX, double mouseY, std::vector<Object3D>& objects, co
 
     // 3. Создать луч
     glm::vec3 rayOrigin = cameraPos;
-    glm::vec3 rayDir = glm::normalize(glm::vec3(worldCoords) - rayOrigin)*200.0f;
+    //glm::vec3 rayDir = glm::normalize(glm::vec3(worldCoords) - rayOrigin)*200.0f;
     glm::vec3 temp = cameraFront*20000.f;
     Ray ray=CreateRay(cameraPos, temp);
 
@@ -1028,6 +1209,7 @@ int main() {
   if (!glfwInit()) return -1;
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+  glfwWindowHint(GLFW_SAMPLES, 4); 
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   GLFWwindow* window = glfwCreateWindow(800,600,"OpenGL 4.6 Cube & Sphere Scene",nullptr,nullptr);
   if (!window) { glfwTerminate(); return -1; }
@@ -1042,8 +1224,10 @@ int main() {
   if (glewInit()!=GLEW_OK) { std::cerr<<"Glew init failed\n"; return -1; }
 
   glEnable(GL_DEPTH_TEST);
-glDepthMask(1);
+  glDepthMask(1);
+  // glEnable(GL_MULTISAMPLE);
    
+//glEnable(GL_FRAMEBUFFER_SRGB);
   GLuint shaderProgram = createProgram(vertexShaderSrc,fragmentShaderSrc);//main
   GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc, depth_fragment_shader);//shadow
   
@@ -1059,17 +1243,6 @@ glDepthMask(1);
   createDBuffer(depthMapFBO,depthMap);
 
 
-float width = 800.0f;
-float height = 600.0f;
-
-// Размер квадрата в пикселях
-float sizeX = 40.0f;
-float sizeY = 40.0f;
-
-// Центр — например, в центре окна
-float centerX = width / 2.0f;
-float centerY = height / 2.0f;
-
 
  GLuint DshaderProgram = createProgram(vDescriptorCentrSrc,fDescriptorCentrSrc);//cross
 GLuint dVAO, dVBO, dEBO;
@@ -1082,6 +1255,12 @@ createDescriptor(dVAO,dVBO,dEBO);
         return -1;
     }
 
+
+
+
+
+   
+    
   // Создаем объекты
   
   glm::vec3 v=glm::vec3{0,0,0};
@@ -1187,7 +1366,7 @@ createDescriptor(dVAO,dVBO,dEBO);
 	if (selectedObject != nullptr) {
 	  // Телепортируемся
 	  cameraPos = selectedObject->position + glm::vec3(0, 2, 5); // смещение для обзора
-	  cameraFront = glm::normalize(selectedObject->position - cameraPos);
+	  //cameraFront = glm::normalize(selectedObject->position - cameraPos);
 	}
       }
     view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
@@ -1238,7 +1417,6 @@ renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
 	     objects7,lightSpaceMatrix);
 
 
-
  RenderObjsMain(shaderProgram, depthMap, cubeVAO,
                     lightSpaceMatrix, view,
                     projection,
@@ -1250,8 +1428,6 @@ renderShadow(shaderDepthProgram,depthMapFBO,cubeVAO,
                   objects5,
                   objects6,
 		objects7);
-
-
 
  //like help-UI draw(ortho)
     glEnable(GL_BLEND);
@@ -1319,8 +1495,7 @@ void processInput(GLFWwindow *window)
   if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
     cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
   if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-    cameraPos +=
-        glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
   // В функции обработки клавиш (например, в processInput):
 if (glfwGetKey(window, GLFW_KEY_T) == GLFW_PRESS) {
   if(teleportationSTATUS==false)teleportationSTATUS=true;
