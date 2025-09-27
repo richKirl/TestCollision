@@ -3,6 +3,9 @@ TestCollision
 
 in this time all scene static(positions BigCubes), but small cubes moving
 
+<img width="1918" height="1008" alt="image" src="https://github.com/user-attachments/assets/a23832e6-2b3e-4be3-a967-fc9bd274c58c" />
+
+
 <img width="1877" height="998" alt="image" src="https://github.com/user-attachments/assets/9a8a576f-1dde-4c59-8b1b-4cf043e5842a" />
 
 
