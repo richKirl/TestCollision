@@ -24,7 +24,7 @@
 #include "stb_image_write.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
-
+//clang++20 -std=c++26 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -I/usr/local/include -I/usr/local/include/freetype2 -L/usr/local/lib -DSHM -lGL -lGLU -lGLEW -lglfw -lm -lfreetype
 FT_Library ft;
 FT_Face face;
 
@@ -1300,10 +1300,10 @@ float getHeightAt(float x, float z) {
 }
 
 void adjustObjectToTerrain(Object3D& obj, float offset = 0.1f) {
-    float terrainHeight = getHeightAt(obj.position.x, obj.position.z)-239.0f;
-    obj.position.y = terrainHeight + offset; // небольшой отступ сверху
-    // Можно также сбросить вертикальную скорость, если нужно
-    obj.velocity.y = 0.0f;
+  float terrainHeight = getHeightAt(obj.position.x, obj.position.z)-239.0f;
+  obj.position.y = terrainHeight + offset; // небольшой отступ сверху
+  // Можно также сбросить вертикальную скорость, если нужно
+  obj.velocity.y = 0.0f;
 }
 
 void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
@@ -1311,7 +1311,7 @@ void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
     o.collided = false;
 
     if (!o.stayObj) {
-          adjustObjectToTerrain(o);
+      adjustObjectToTerrain(o);
       // o.prevpos = o.position; // запомнить позицию перед обновлением
       // o.position.y = getHeightAt(o.position.x,o.position.z);
       // o.position += o.velocity;
@@ -1319,11 +1319,11 @@ void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
       // checkCollisionsBVH(bvhRoot,&o,0.1f);
       // Можно добавить ограничение по границам сцены
       // например, чтобы объекты не выходили за рамки
-            o.prevpos = o.position; // запоминаем старую позицию
-            o.position += o.velocity;
-	    traverseBVHR(bvhRoot, &o);
-	    //checkCollisionsBVH(bvhRoot,&o,0.1f);
-            // Теперь корректируем высоту по terrain
+      o.prevpos = o.position; // запоминаем старую позицию
+      o.position += o.velocity;
+      traverseBVHR(bvhRoot, &o);
+      //checkCollisionsBVH(bvhRoot,&o,0.1f);
+      // Теперь корректируем высоту по terrain
 
     }
   }
@@ -1803,30 +1803,30 @@ void setupTerrainBuffers() {
 
 void smoothHeightMap(std::vector<float> &heightMap, int size, int iterations) {
   //float* temp = new float[size * size];
-HeightMap temp(SIZE * SIZE, 0.0);
-    for (int iter = 0; iter < iterations; ++iter) {
-        for (int z = 0; z < size; ++z) {
-            for (int x = 0; x < size; ++x) {
-                float sum = 0.0f;
-                int count = 0;
+  HeightMap temp(SIZE * SIZE, 0.0);
+  for (int iter = 0; iter < iterations; ++iter) {
+    for (int z = 0; z < size; ++z) {
+      for (int x = 0; x < size; ++x) {
+	float sum = 0.0f;
+	int count = 0;
 
-                // Собираем соседние ячейки (8 направлений + центр)
-                for (int dz = -1; dz <= 1; ++dz) {
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        int nx = x + dx;
-                        int nz = z + dz;
-                        if (nx >= 0 && nx < size && nz >= 0 && nz < size) {
-                            sum += heightMap[nz * size + nx];
-                            count++;
-                        }
-                    }
-                }
-                temp[z * size + x] = sum / count;
-            }
-        }
-        std::swap(heightMap, temp);
+	// Собираем соседние ячейки (8 направлений + центр)
+	for (int dz = -1; dz <= 1; ++dz) {
+	  for (int dx = -1; dx <= 1; ++dx) {
+	    int nx = x + dx;
+	    int nz = z + dz;
+	    if (nx >= 0 && nx < size && nz >= 0 && nz < size) {
+	      sum += heightMap[nz * size + nx];
+	      count++;
+	    }
+	  }
+	}
+	temp[z * size + x] = sum / count;
+      }
     }
-    //delete[] temp;
+    std::swap(heightMap, temp);
+  }
+  //delete[] temp;
 }
 
 // void generateHeightMap() {
@@ -1881,10 +1881,10 @@ HeightMap temp(SIZE * SIZE, 0.0);
 
 
 struct Character {
-    GLuint TextureID;  // ID текстуры глифа
-    glm::ivec2 Size;   // Размер глифа
-    glm::ivec2 Bearing; // Смещение
-    GLuint Advance;    // Шаг
+  GLuint TextureID;  // ID текстуры глифа
+  glm::ivec2 Size;   // Размер глифа
+  glm::ivec2 Bearing; // Смещение
+  GLuint Advance;    // Шаг
 };
 
 std::map<char, Character> Characters;
@@ -1931,61 +1931,61 @@ GLuint VAOtext, VBOtext;
 void RenderText(GLuint &shader, std::string text, float x, float y, float scale, glm::vec3 color,glm::mat4 &proj) {
   // shader.use();
   glUseProgram(shader);
-    int projLoc = glGetUniformLocation(shader, "projection");
-    //glUseProgram(shader);
+  int projLoc = glGetUniformLocation(shader, "projection");
+  //glUseProgram(shader);
   glUniformMatrix4fv(projLoc, 1, GL_FALSE, &proj[0][0]);
   glUniform3f(glGetUniformLocation(shader, "textColor"), color.x, color.y, color.z);
-    glActiveTexture(GL_TEXTURE0);
-    glBindVertexArray(VAOtext); // VAO для текстовых символов
+  glActiveTexture(GL_TEXTURE0);
+  glBindVertexArray(VAOtext); // VAO для текстовых символов
 
-    for (char c : text) {
-        Character ch = Characters[c];
+  for (char c : text) {
+    Character ch = Characters[c];
 
-        float xpos = x + ch.Bearing.x * scale;
-        float ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
+    float xpos = x + ch.Bearing.x * scale;
+    float ypos = y - (ch.Size.y - ch.Bearing.y) * scale;
 
-        float w = ch.Size.x * scale;
-        float h = ch.Size.y * scale;
+    float w = ch.Size.x * scale;
+    float h = ch.Size.y * scale;
 
-        // Обновите VBO для каждого символа
-        float vertices[6][4] = {
-            { xpos,     ypos + h,   0.0f, 0.0f },
-            { xpos,     ypos,       0.0f, 1.0f },
-            { xpos + w, ypos,       1.0f, 1.0f },
+    // Обновите VBO для каждого символа
+    float vertices[6][4] = {
+      { xpos,     ypos + h,   0.0f, 0.0f },
+      { xpos,     ypos,       0.0f, 1.0f },
+      { xpos + w, ypos,       1.0f, 1.0f },
 
-            { xpos,     ypos + h,   0.0f, 0.0f },
-            { xpos + w, ypos,       1.0f, 1.0f },
-            { xpos + w, ypos + h,   1.0f, 0.0f }
-        };
+      { xpos,     ypos + h,   0.0f, 0.0f },
+      { xpos + w, ypos,       1.0f, 1.0f },
+      { xpos + w, ypos + h,   1.0f, 0.0f }
+    };
 
-        // Обновляем VBO
-        glBindBuffer(GL_ARRAY_BUFFER, VBOtext);
-        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
+    // Обновляем VBO
+    glBindBuffer(GL_ARRAY_BUFFER, VBOtext);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(vertices), vertices);
 
-        // Рисуем глиф
-        glBindTexture(GL_TEXTURE_2D, ch.TextureID);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+    // Рисуем глиф
+    glBindTexture(GL_TEXTURE_2D, ch.TextureID);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 
-        // Обновляем позицию для следующего символа
-        x += (ch.Advance >> 6) * scale; // сдвиг на следующий символ
-    }
+    // Обновляем позицию для следующего символа
+    x += (ch.Advance >> 6) * scale; // сдвиг на следующий символ
+  }
 
-    glBindVertexArray(0);
-    glBindTexture(GL_TEXTURE_2D, 0);
+  glBindVertexArray(0);
+  glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void configTextbufs() {
-      // configure VAO/VBO for texture quads
-    // -----------------------------------
-    glGenVertexArrays(1, &VAOtext);
-    glGenBuffers(1, &VBOtext);
-    glBindVertexArray(VAOtext);
-    glBindBuffer(GL_ARRAY_BUFFER, VBOtext);
-    glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, NULL, GL_DYNAMIC_DRAW);
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
+  // configure VAO/VBO for texture quads
+  // -----------------------------------
+  glGenVertexArrays(1, &VAOtext);
+  glGenBuffers(1, &VBOtext);
+  glBindVertexArray(VAOtext);
+  glBindBuffer(GL_ARRAY_BUFFER, VBOtext);
+  glBufferData(GL_ARRAY_BUFFER, sizeof(float) * 6 * 4, NULL, GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
+  glBindVertexArray(0);
 }
 
 int main() {
@@ -2033,24 +2033,24 @@ int main() {
   // smoothHeightMap(heightMap,512,3);
   // generateComplexTunnel(heightMap,SIZE,2,20,1.0f,20.1f,10.0f);//
   
-int width = SIZE; // ширина карты
-int height = SIZE; // высота карты
-int channels; 
-unsigned char* data = stbi_load("heightmap3.png", &width, &height, &channels, 1); // 1 — для grayscale
+  int width = SIZE; // ширина карты
+  int height = SIZE; // высота карты
+  int channels; 
+  unsigned char* data = stbi_load("heightmap3.png", &width, &height, &channels, 1); // 1 — для grayscale
 
-if (data == nullptr) {
+  if (data == nullptr) {
     // Обработка ошибки
     std::cerr << "Failed to load image" << std::endl;
-} else {
-  // data содержит изображение в виде массива байтов (грейскейл)
-  // width и height — размеры изображения
-  // channels — число каналов (будет 1, так как мы указали 1)
+  } else {
+    // data содержит изображение в виде массива байтов (грейскейл)
+    // width и height — размеры изображения
+    // channels — число каналов (будет 1, так как мы указали 1)
   
-for (int i = 0; i < width * height; ++i) {
-  heightMap[i] = (data[i] / 255.0f)*20.0f; // преобразование к диапазону 0-1
-}
-}
-stbi_image_free(data);
+    for (int i = 0; i < width * height; ++i) {
+      heightMap[i] = (data[i] / 255.0f)*20.0f; // преобразование к диапазону 0-1
+    }
+  }
+  stbi_image_free(data);
   createTerrainMesh();
   setupTerrainBuffers();
   //glEnable(GL_FRAMEBUFFER_SRGB);
@@ -2081,8 +2081,8 @@ stbi_image_free(data);
       return -1;
     }
 
-    GLuint shaderText = createProgram(vTSrc, fTSrc); // text
-    configTextbufs();
+  GLuint shaderText = createProgram(vTSrc, fTSrc); // text
+  configTextbufs();
   createTextureFont();
   
 
@@ -2184,21 +2184,21 @@ stbi_image_free(data);
 
 
 
-// // Создаем массив байтов для хранения изображения
-// unsigned char* imageData = new unsigned char[width * height];
+  // // Создаем массив байтов для хранения изображения
+  // unsigned char* imageData = new unsigned char[width * height];
 
-// for (int i = 0; i < width * height; ++i) {
-//     float value = heightMap[i];
-//     // Ограничим значение в диапазоне 0-1
-//     if (value < 0.0f) value = 0.0f;
-//     if (value > 1.0f) value = 1.0f;
+  // for (int i = 0; i < width * height; ++i) {
+  //     float value = heightMap[i];
+  //     // Ограничим значение в диапазоне 0-1
+  //     if (value < 0.0f) value = 0.0f;
+  //     if (value > 1.0f) value = 1.0f;
 
-//     imageData[i] = static_cast<unsigned char>(value * 255.0f);
-// }
-// // Сохраняем как PNG (grayscale)
-// stbi_write_png("heightmap.png", width, height, 1, imageData, width);
+  //     imageData[i] = static_cast<unsigned char>(value * 255.0f);
+  // }
+  // // Сохраняем как PNG (grayscale)
+  // stbi_write_png("heightmap.png", width, height, 1, imageData, width);
 
-// delete[] imageData;
+  // delete[] imageData;
 
 
   
@@ -2218,9 +2218,9 @@ stbi_image_free(data);
       }
     }
 
-  lightProjection = glm::perspective(glm::radians(45.0f), (float)wi / he, 1.0f, 2000.f);//glm::ortho(-2024, 2024, -2024, 2024,near_plane,far_plane);//
-  lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-  lightSpaceMatrix = lightProjection * lightView;
+    lightProjection = glm::perspective(glm::radians(45.0f), (float)wi / he, 1.0f, 2000.f);//glm::ortho(-2024, 2024, -2024, 2024,near_plane,far_plane);//
+    lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
+    lightSpaceMatrix = lightProjection * lightView;
 
     
     view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
@@ -2290,7 +2290,7 @@ stbi_image_free(data);
     //glDisable(GL_BLEND);
  
     RenderText(shaderText, "This is sample text", 25.0f, 25.0f, 1.0f, glm::vec3(0.5, 0.8f, 0.2f),Oproj);
-    RenderText(shaderText, "(C) LearnOpenGL.com",wi-280.0f, he-30.0f, 0.5f, glm::vec3(0.3, 0.7f, 0.9f),Oproj);
+    RenderText(shaderText, "And This text",wi-280.0f, he-30.0f, 0.5f, glm::vec3(0.3, 0.7f, 0.9f),Oproj);
        
     glfwSwapBuffers(window);
     glfwPollEvents();
