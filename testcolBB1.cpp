@@ -557,8 +557,8 @@ bool checkCollision(const Object3D& a, const Object3D& b) {
 void resolveCollision(Object3D& a, Object3D& b) {
   // Предположим, что масса обратно пропорциональна объему
 
-  float massA = a.stayObj ? 1e9f : glm::length(a.isSphere ? a.radius : a.size);
-  float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size);
+  float massA = a.stayObj ? 1e9f : glm::length(a.isSphere ? a.radius : a.size* 0.5f);
+  float massB = b.stayObj ? 1e9f : glm::length(b.isSphere ? b.radius : b.size* 0.5f);
 
   
   // Вектор столкновения
@@ -568,7 +568,7 @@ void resolveCollision(Object3D& a, Object3D& b) {
   if (relativeVelocity > 0) return; // объекты удаляются друг от друга
 
   // Расчет импульса
-  float restitution = 0.8f; // коэффициент восстановления, 1 — идеально упругий
+  float restitution = 0.5f; // коэффициент восстановления, 1 — идеально упругий
   float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
 
   glm::vec3 impulse = impulseMag * collisionNormal;
@@ -588,8 +588,8 @@ void reflectVelocity(Object3D& obj, const glm::vec3& normal) {
 void traverseBVH(BVHNode *node, Object3D *obj) {
   //   AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
   // if (!node || !node->box.intersects(aabbExpanded)) return;
-  if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
-					  obj->position + (obj->isSphere ? obj->radius : obj->size)))) return;
+  if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size*0.5f),
+					  obj->position + (obj->isSphere ? obj->radius : obj->size*0.5f)))) return;
   if (node->isLeaf()) {
     for (auto* other : node->objects) {
       if (other != obj && checkCollision(*obj, *other)) {
@@ -1210,8 +1210,8 @@ void traverseBVHR(BVHNode *node, Object3D *obj) {
   else {
     if (!node ||
         !node->box.intersects(
-			      AABB(obj->position - (obj->isSphere ? obj->radius : obj->size),
-				   obj->position + (obj->isSphere ? obj->radius : obj->size))))
+			      AABB(obj->position - (obj->isSphere ? obj->radius : obj->size*0.5f),
+				   obj->position + (obj->isSphere ? obj->radius : obj->size*0.5f))))
       return;
   }
   if (node->isLeaf()) {
@@ -1589,7 +1589,7 @@ void pickObject(double mouseX, double mouseY, std::vector<Object3D>& objects, co
   // 3. Создать луч
   glm::vec3 rayOrigin = cameraPos;
   //glm::vec3 rayDir = glm::normalize(glm::vec3(worldCoords) - rayOrigin)*200.0f;
-  glm::vec3 temp = cameraFront*20000.f;
+  glm::vec3 temp = cameraFront*2000000.f;
   Ray ray=CreateRay(cameraPos, temp);
 
 
