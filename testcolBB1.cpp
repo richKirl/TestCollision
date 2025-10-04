@@ -227,7 +227,7 @@ int dindices[] = {0, 1, 3, 1, 2, 3};
 // --- Структуры объектов и BVH ---
 #define CXX 256 // step
 #define tCXX 2*CXX
-#define tN 100
+#define tN 2
 int wi=800;
 int he = 600;
 const int SIZE = 512;
@@ -406,7 +406,7 @@ float cubeVertices[] = {
 
 // --- main() ---
 // camera
-glm::vec3 cameraPos   = glm::vec3(50.0f-256.0f, -220.0f,-256.0f );//50.0f-256.0f, -220.0f,440.0f-256.0f
+glm::vec3 cameraPos   = glm::vec3(50.0f-256.0f, -220.0f,440.0f-256.0f);//50.0f-256.0f, -220.0f,440.0f-256.0f
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
 glm::vec3 cameraUp    = glm::vec3(0.0f, 1.0f, 0.0f);
 bool firstMouse = true;
@@ -422,7 +422,7 @@ float deltaTime = 0.0f;	// time between current frame and last frame
 float lastFrame = 0.0f;
 
 
-glm::vec3 lightPos = glm::vec3(0.0f, 512.0f, 0.0f);
+glm::vec3 lightPos = glm::vec3(0.f, 512.0f, 0.0f);
 float angle = 0.0f; // угол для движения по окружности
 
 
@@ -445,6 +445,239 @@ glm::mat4 lightSpaceMatrix;
 glm::mat4 lightProjection, lightView;
 
 glm::mat4 termodel = glm::translate(glm::mat4(1.f), glm::vec3(0.0f,-240.0f,0.0f));
+
+float getHeightAt(float x, float z) {
+  // Преобразуем мировые координаты в локальные индексы
+  float gridSize = terrainSize - 1;
+  float fx = (x + terrainSize / 2.0f);
+  float fz = (z + terrainSize / 2.0f);
+
+  float u = fx / terrainSize * gridSize;
+  float v = fz / terrainSize * gridSize;
+
+  int x0 = static_cast<int>(floor(u));
+  int x1 = x0 + 1;
+  int z0 = static_cast<int>(floor(v));
+  int z1 = z0 + 1;
+
+  // Ограничиваем индексы
+  x0 = std::clamp(x0, 0, terrainSize - 1);
+  x1 = std::clamp(x1, 0, terrainSize - 1);
+  z0 = std::clamp(z0, 0, terrainSize - 1);
+  z1 = std::clamp(z1, 0, terrainSize - 1);
+
+  // Получаем высоты в углах квадрата
+  float h00 = heightMap[z0 * terrainSize + x0];
+  float h10 = heightMap[z0 * terrainSize + x1];
+  float h01 = heightMap[z1 * terrainSize + x0];
+  float h11 = heightMap[z1 * terrainSize + x1];
+
+  // Билинейная интерполяция
+  float tx = u - x0;
+  float tz = v - z0;
+
+  float h0 = h00 * (1 - tx) + h10 * tx;
+  float h1 = h01 * (1 - tx) + h11 * tx;
+
+  float height = h0 * (1 - tz) + h1 * tz;
+
+  return height;
+}
+
+
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Структура узла
+struct NodeP {
+  int x, z;             // Координаты в сетке
+  float height;         // Высота
+  std::vector<int> neighbors; // Индексы соседних узлов
+
+  float costToNeighbor(int neighborIndex, const std::vector<NodeP>& nodes) const {
+    // const NodeP& b = nodes[neighborIndex];
+    // float dx = static_cast<float>(b.x - x);
+    // float dz = static_cast<float>(b.z - z);
+    // float dy = b.height - height;
+    // float horizontalDistance = std::sqrt(dx * dx + dz * dz);
+    // return std::sqrt(horizontalDistance * horizontalDistance + dy * dy);
+    const NodeP& b = nodes[neighborIndex];
+
+    float dx = static_cast<float>(b.x - x);
+    float dz = static_cast<float>(b.z - z);
+    float dy = b.height - height;
+
+    float horizontalDistance = std::sqrt(dx * dx + dz * dz);
+
+    // Расчет наклона в градусах
+    float angleRadians = std::atan2(dy, horizontalDistance);
+    float angleDegrees = angleRadians * (180.0f / M_PI);
+
+    // Порог наклона (например, 30 градусов)
+    const float maxSlopeDegrees = 16.0f;
+    float penaltyFactor = 10.0f; // коэффициент штрафа, подберите по необходимости
+    float penalty = 0.0f;
+
+    if (abs(angleDegrees) > maxSlopeDegrees) {
+      penalty = (abs(angleDegrees) - maxSlopeDegrees) * penaltyFactor;
+    }
+    //else penalty-=10.0f;
+    // Базовая стоимость перемещения
+    float baseCost = std::sqrt(horizontalDistance * horizontalDistance + dy * dy);
+
+    // Итоговая стоимость с штрафом
+    return baseCost + penalty;
+  }
+};
+std::vector<NodeP> nodes;
+//const int terrainSize = 5; // Размер сетки
+// float heightMap[25] = {
+//     0, 1, 2, 1, 0,
+//     1, 2, 3, 2, 1,
+//     2, 3, 4, 3, 2,
+//     1, 2, 3, 2, 1,
+//     0, 1, 2, 1, 0
+// };
+void createPathsMap(std::vector<float> &heightmap){
+  nodes.clear();
+  // Создание узлов
+  for (int z = 0; z < terrainSize; ++z) {
+    for (int x = 0; x < terrainSize; ++x) {
+      NodeP node;
+      node.x = x;
+      node.z = z;
+      node.height = getHeightAt(x-256,z-256)-239.0f;
+      nodes.push_back(node);
+    }
+  }
+  // Построение связей с 8 соседями
+  for (int z = 0; z < terrainSize; ++z) {
+    for (int x = 0; x < terrainSize; ++x) {
+      int index = z * terrainSize + x;
+
+      if (x > 0) nodes[index].neighbors.push_back(index - 1);
+      if (x < terrainSize - 1) nodes[index].neighbors.push_back(index + 1);
+      if (z > 0) nodes[index].neighbors.push_back(index - terrainSize);
+      if (z < terrainSize - 1) nodes[index].neighbors.push_back(index + terrainSize);
+
+      if (x > 0 && z > 0) nodes[index].neighbors.push_back(index - terrainSize - 1);
+      if (x > 0 && z < terrainSize - 1) nodes[index].neighbors.push_back(index + terrainSize - 1);
+      if (x < terrainSize - 1 && z > 0) nodes[index].neighbors.push_back(index - terrainSize + 1);
+      if (x < terrainSize - 1 && z < terrainSize - 1) nodes[index].neighbors.push_back(index + terrainSize + 1);
+    }
+  }
+}
+// Функция для получения стоимости между двумя узлами
+float getCost(int aIndex, int bIndex, const std::vector<NodeP>& nodes) {
+  return nodes[aIndex].costToNeighbor(bIndex, nodes);
+}
+
+// Алгоритм Дейкстры для поиска кратчайшего пути
+std::vector<int> dijkstra(const std::vector<NodeP>& nodes, int startIdx, int goalIdx, float& totalCost) {
+  size_t n = nodes.size();
+
+  std::vector<float> dist(n, std::numeric_limits<float>::max());
+  std::vector<int> prev(n, -1);
+  dist[startIdx] = 0.0f;
+
+  using P = std::pair<float, int>;
+  std::priority_queue<P, std::vector<P>, std::greater<P>> queue;
+  queue.emplace(0.0f, startIdx);
+
+  totalCost = 0.0f;
+
+  while (!queue.empty()) {
+    auto [currentDist, u] = queue.top();
+    queue.pop();
+
+    if (u == goalIdx) break;
+
+    if (currentDist > dist[u]) continue;
+
+    for (int neighbor : nodes[u].neighbors) {
+      float cost = getCost(u, neighbor, nodes);
+      float newDist = dist[u] + cost;
+      if (newDist < dist[neighbor]) {
+	dist[neighbor] = newDist;
+	prev[neighbor] = u;
+	queue.emplace(newDist, neighbor);
+      }
+    }
+  }
+
+  // Восстановление пути и подсчет стоимости
+  std::vector<int> path;
+  totalCost = dist[goalIdx];
+  for (int at = goalIdx; at != -1; at = prev[at]) {
+    path.push_back(at);
+  }
+  std::reverse(path.begin(), path.end());
+  return path;
+}
+
+// Объект движения
+struct MovingObject {
+  std::vector<int> p;
+  glm::vec3 position; // текущая позиция
+  int targetIndex;    // индекс следующей вершины маршрута
+  float progress;     // прогресс между текущей и следующей точкой (0..1)
+  float speed;        // скорость движения (единиц в секунду)
+};
+
+// Инициализация
+void initObject(MovingObject &obj,std::vector<int> &route,float moveSpeed) {
+  obj.p=route;
+  obj.position = glm::vec3(nodes[route[0]].x,nodes[route[0]].height,nodes[route[0]].z);
+  obj.targetIndex = 1; // следующая точка маршрута
+  obj.progress = 0.0f;
+  obj.speed = moveSpeed;
+}
+
+// Обновление позиции объекта в каждом кадре
+void updateObject(MovingObject& obj,float deltaTime) {
+  if (obj.targetIndex >= obj.p.size()) return; // достиг цели
+
+  // текущая точка
+  glm::vec3 startPos = obj.position;
+  // следующая точка маршрута
+  int tt=obj.p[obj.targetIndex];
+  NodeP targetNode = nodes[tt];
+  glm::vec3 endPos(targetNode.x, targetNode.height, targetNode.z);
+
+  // Расстояние между точками
+  float distance = glm::distance(startPos, endPos);
+  // Время, за которое нужно пройти путь
+  float travelTime = distance / obj.speed;
+
+  // Обновляем прогресс
+  float deltaProgress = deltaTime / travelTime; // доля пути за текущий кадр
+  obj.progress += deltaProgress;
+
+  if (obj.progress >= 1.0f) {
+    // достигли следующей точки
+    obj.position = endPos;
+    obj.targetIndex++;
+    obj.progress = 0.0f; // начинаем движение к следующей точке
+  } else {
+    // интерполируем позицию
+    obj.position = glm::mix(startPos, endPos, obj.progress);
+  }
+}
+
+//В основном цикле рендеринга:
+
+// float deltaTime = getDeltaTime(); // время между кадрами
+// updateObject(myObject, path, deltaTime);
+
+// // Теперь используйте myObject.position для отрисовки вашего объекта
+// drawObjectAtPosition(myObject.position);
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+
+
+
+
+
 
 // Создание луча
 struct Ray {
@@ -569,8 +802,8 @@ void resolveCollision(Object3D& a, Object3D& b) {
   if (relativeVelocity > 0) return; // объекты удаляются друг от друга
 
   // Расчет импульса
-  float restitution = 0.9f; // коэффициент восстановления, 1 — идеально упругий
-  float impulseMag = -(1 + restitution) * relativeVelocity / (1/massA + 1/massB);
+  float restitution = 0.8f; // или любой другой параметр
+  float impulseMag = -(1.0f + restitution) * relativeVelocity / (1/massA + 1/massB);
 
   glm::vec3 impulse = impulseMag * collisionNormal;
 
@@ -589,8 +822,8 @@ void reflectVelocity(Object3D& obj, const glm::vec3& normal) {
 void traverseBVH(BVHNode *node, Object3D *obj) {
   //   AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
   // if (!node || !node->box.intersects(aabbExpanded)) return;
-  if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere*2.5f ? obj->radius : obj->size*0.5f),
-					  obj->position + (obj->isSphere*2.5f ? obj->radius : obj->size*0.5f)))) return;
+  if (!node || !node->box.intersects(AABB(obj->position - (obj->isSphere ? obj->radius : obj->size*0.5f),
+					  obj->position + (obj->isSphere ? obj->radius : obj->size*0.5f)))) return;
   if (node->isLeaf()) {
     for (auto* other : node->objects) {
       if (other != obj && checkCollision(*obj, *other)) {
@@ -736,7 +969,7 @@ void main() {
     vec3 specular = vec3(0.2) * spec;
     //vec3 result = ambient + diffuse + specular;
 //float shadow = ShadowCalculation(FragPosLightSpace);
-vec3 result = (ambient +  diffuse + specular) * objectColor;
+vec3 result = (ambient + diffuse + specular) * objectColor;
     // Расчет расстояния до камеры
     float distance = length(fragPosition - cameraPos);
 
@@ -773,7 +1006,6 @@ const char *depth_fragment_shader = R"(
 void main()
 {
     // ничего не нужно, depth берется автоматически
-
 }
 )";
 
@@ -922,17 +1154,21 @@ GLuint createProgram(const char* a,const char* b) {
 
 
 
-void createDBuffer(  GLuint &depthMapFBO, GLuint &depthMap,const unsigned int SHADOW_WIDTH = 1024, const unsigned int  SHADOW_HEIGHT = 1024){
+void createDBuffer(GLuint &depthMapFBO, GLuint &depthMap,
+                   const unsigned int SHADOW_WIDTH = 1024,
+                   const unsigned int SHADOW_HEIGHT = 1024) {
   glGenFramebuffers(1, &depthMapFBO);
-
   glGenTextures(1, &depthMap);
   glBindTexture(GL_TEXTURE_2D, depthMap);
   glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, 4096, 4096, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  // установим параметры фильтрации текстуры - линейная фильтрация
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
+  // установим параметры "оборачиваниея" текстуры - отсутствие оборачивания
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  // attach depth texture as FBO's depth buffer
   glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depthMap, 0);
   glDrawBuffer(GL_NONE);
@@ -1038,7 +1274,7 @@ void createOneBigCubeCoords(std::vector<Object3D>& objects,glm::vec3 &v) {
     // кубы
     std::string t="cube";
     objects.push_back(Object3D{
-        glm::vec3(x + v.x, y + v.y, z + v.z),
+        glm::vec3(404-256, y + v.y, 40-256),
         glm::vec3(x, y, z),
         {((rand() % 100) / 100.0f - 0.5f) * .51f,
          ((rand() % 100) / 100.0f - 0.5f) * .51f,
@@ -1205,9 +1441,9 @@ int counterRR=0;
 void traverseBVHR(BVHNode *node, Object3D *obj) {
   //if(counterRR >= 100){counterRR=0;}
   //if(counterRR<100){
-    AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
-    if (!node || !node->box.intersects(aabbExpanded)) return;
-    //}
+  AABB aabbExpanded = getExpandedAABB(*obj, 0.16f);
+  if (!node || !node->box.intersects(aabbExpanded)) return;
+  //}
   // else {
   //   if (!node ||
   //       !node->box.intersects(
@@ -1253,52 +1489,15 @@ void traverseBVHR(BVHNode *node, Object3D *obj) {
     //   traverseBVH(node->right, obj);
     // }
     //else {
-      traverseBVHR(node->left, obj);
-      traverseBVHR(node->right, obj);
-      //}
+    traverseBVHR(node->left, obj);
+    traverseBVHR(node->right, obj);
+    //}
   }
 
 }
 
 
 
-float getHeightAt(float x, float z) {
-  // Преобразуем мировые координаты в локальные индексы
-  float gridSize = terrainSize - 1;
-  float fx = (x + terrainSize / 2.0f);
-  float fz = (z + terrainSize / 2.0f);
-
-  float u = fx / terrainSize * gridSize;
-  float v = fz / terrainSize * gridSize;
-
-  int x0 = static_cast<int>(floor(u));
-  int x1 = x0 + 1;
-  int z0 = static_cast<int>(floor(v));
-  int z1 = z0 + 1;
-
-  // Ограничиваем индексы
-  x0 = std::clamp(x0, 0, terrainSize - 1);
-  x1 = std::clamp(x1, 0, terrainSize - 1);
-  z0 = std::clamp(z0, 0, terrainSize - 1);
-  z1 = std::clamp(z1, 0, terrainSize - 1);
-
-  // Получаем высоты в углах квадрата
-  float h00 = heightMap[z0 * terrainSize + x0];
-  float h10 = heightMap[z0 * terrainSize + x1];
-  float h01 = heightMap[z1 * terrainSize + x0];
-  float h11 = heightMap[z1 * terrainSize + x1];
-
-  // Билинейная интерполяция
-  float tx = u - x0;
-  float tz = v - z0;
-
-  float h0 = h00 * (1 - tx) + h10 * tx;
-  float h1 = h01 * (1 - tx) + h11 * tx;
-
-  float height = h0 * (1 - tz) + h1 * tz;
-
-  return height;
-}
 
 void adjustObjectToTerrain(Object3D& obj, float offset = 0.1f) {
   float terrainHeight = getHeightAt(obj.position.x, obj.position.z)-239.0f;
@@ -1310,9 +1509,9 @@ void adjustObjectToTerrain(Object3D& obj, float offset = 0.1f) {
 void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
   for (auto& o : objects) {
     o.collided = false;
-
+    
     if (!o.stayObj) {
-      adjustObjectToTerrain(o);
+      //adjustObjectToTerrain(o);
       // o.prevpos = o.position; // запомнить позицию перед обновлением
       // o.position.y = getHeightAt(o.position.x,o.position.z);
       // o.position += o.velocity;
@@ -1321,8 +1520,8 @@ void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
       // Можно добавить ограничение по границам сцены
       // например, чтобы объекты не выходили за рамки
       o.prevpos = o.position; // запоминаем старую позицию
-      o.position += o.velocity;
-      traverseBVH(bvhRoot, &o);
+      //o.position += o.velocity;
+      //traverseBVH(bvhRoot, &o);
       //checkCollisionsBVH(bvhRoot,&o,deltaTime);
       // Теперь корректируем высоту по terrain
       
@@ -1334,12 +1533,17 @@ void updateObjects(std::vector<Object3D>& objects, BVHNode* bvhRoot) {
 void RObjects(std::vector<Object3D>& objects,GLuint cubeVAO,GLuint shaderDepthProgram) {
   // Отрисовка всех объектов сцены
   for (auto &o : objects) {
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
-    glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
-    glBindVertexArray(cubeVAO);
-    glDrawArrays(GL_TRIANGLES, 0, 36);
-    glBindVertexArray(0);
+    if (o.stayObj) {
+    }
+    else {
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size);
+      glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "model"), 1, GL_FALSE, &model[0][0]);
+      //glUniformMatrix4fv(glGetUniformLocation(shaderDepthProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+      glBindVertexArray(cubeVAO);
+      glDrawArrays(GL_TRIANGLES, 0, 36);
+      glBindVertexArray(0);
+    }
   }
 }
 
@@ -1350,9 +1554,9 @@ void renderTerrainS(GLuint shaderProgram) {
   glm::mat4 model = termodel;
   glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, &model[0][0]);
   // glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 100.0f, 200.0f, 100.0f);
-  // glUniform3f(glGetUniformLocation(shaderProgram, "viewPos"), cameraPos.x, cameraPos.y, cameraPos.z);
+  //glUniform3f(glGetUniformLocation(shaderProgram, "viewPos"), cameraPos.x, cameraPos.y, cameraPos.z);
   // glUniform3f(glGetUniformLocation(shaderProgram, "objectColor"), 0.4f, 0.8f, 0.4f);
-  //glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+  glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
   glBindVertexArray(terrainVAO);
   glDrawElements(GL_TRIANGLES, terrainIndices.size(), GL_UNSIGNED_INT, 0);
   glBindVertexArray(0);
@@ -1383,12 +1587,18 @@ void renderShadow(GLuint shaderDepthProgram, GLuint depthMapFBO, GLuint cubeVAO,
                   std::vector<Object3D> &objects6,
                   std::vector<Object3D>& objects7,glm::mat4 &lightSpaceMatrix) {
   // Размер viewport для depth карты
-  glViewport(0, 0, 4096, 4096);
-  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
-  glClear(GL_DEPTH_BUFFER_BIT);
-
-  // Используем шейдер для depth
   glUseProgram(shaderDepthProgram);
+  glBindFramebuffer(GL_FRAMEBUFFER, depthMapFBO);
+  glViewport(0, 0, 4096, 4096);
+  // отключаем вывод цвета
+  //glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  // включаем вывод буфера глубины
+  glDepthMask(GL_TRUE);
+  glClear(GL_DEPTH_BUFFER_BIT);
+  // отключаем отображение внешних граней объекта, оставляя внутренние
+  //glCullFace(GL_BACK);
+  // Используем шейдер для depth
+
 
   // Создаем матрицу света
 
@@ -1418,21 +1628,24 @@ void renderShadow(GLuint shaderDepthProgram, GLuint depthMapFBO, GLuint cubeVAO,
 
 void RObjects(std::vector<Object3D>& objects,GLint locModel,GLint locColor) {
   for (auto &o : objects) {
-    if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-
-    // Перед отрисовкой
-    glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
-    glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
-    model = glm::scale(model, scaleVal);
-    glUniformMatrix4fv(locModel,1,false,&model[0][0]);
-    // Проверка, выбран ли объект
-    if (&o == selectedObject) {
-      glUniform3f(locColor, 0.0f, 1.0f, 0.0f); // Зеленый
-    } else {
-      glUniform3f(locColor, o.collided ? 1.f : 0.f, 0.f, o.collided ? 0.f : 1.f); // исходный цвет
+    //if (o.stayObj) glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    //else glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    if (o.stayObj) {
     }
-    glDrawArrays(GL_TRIANGLES,0,36);
+    else {
+      // Перед отрисовкой
+      glm::vec3 scaleVal = o.isSphere ? glm::vec3(o.radius.x * 2.0f) : o.size;
+      glm::mat4 model = glm::translate(glm::mat4(1.f), o.position);
+      model = glm::scale(model, scaleVal);
+      glUniformMatrix4fv(locModel,1,false,&model[0][0]);
+      // Проверка, выбран ли объект
+      if (&o == selectedObject) {
+	glUniform3f(locColor, 0.0f, 1.0f, 0.0f); // Зеленый
+      } else {
+	glUniform3f(locColor, o.collided ? 1.f : 0.f, 0.f, o.collided ? 0.f : 1.f); // исходный цвет
+      }
+      glDrawArrays(GL_TRIANGLES,0,36);
+    }
   }
 }
 
@@ -1455,14 +1668,15 @@ void RenderObjsMain(GLuint shaderProgram, GLuint depthMap, GLuint cubeVAO,
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   glUseProgram(shaderProgram);
-
-  // Передача матрицы светового пространства
-  glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
-
   // Передача depth карты
+  
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, depthMap);
   glUniform1i(glGetUniformLocation(shaderProgram, "shadowMap"), 0);
+  // Передача матрицы светового пространства
+  glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "lightSpaceMatrix"), 1, GL_FALSE, &lightSpaceMatrix[0][0]);
+
+
   // glUniform1i(glGetUniformLocation(shaderProgram, "shadowMap"), 0);
   glUniform3f(glGetUniformLocation(shaderProgram, "fogColor"), 0.5f, 0.5f, 0.7f);
   glUniform1f(glGetUniformLocation(shaderProgram, "fogDensity"), 0.02f);
@@ -1479,8 +1693,6 @@ void RenderObjsMain(GLuint shaderProgram, GLuint depthMap, GLuint cubeVAO,
   glUniform3f(locViewPos, cameraPos.x, cameraPos.y, cameraPos.z);
   GLint locModel = glGetUniformLocation(shaderProgram,"model");
   GLint locColor = glGetUniformLocation(shaderProgram,"objectColor");
-  // glActiveTexture(GL_TEXTURE0);
-  // glBindTexture(GL_TEXTURE_2D, depthMap);
 
   //glBindVertexArray(terrainVAO);
   renderTerrainM(shaderProgram);
@@ -1991,12 +2203,12 @@ void configTextbufs() {
 
 
 glm::vec3 computeNormal(int x, int z) {
-    float heightL = getHeightAt(x - 1, z);
-    float heightR = getHeightAt(x + 1, z);
-    float heightD = getHeightAt(x, z - 1);
-    float heightU = getHeightAt(x, z + 1);
-    glm::vec3 normal = glm::normalize(glm::vec3(heightL - heightR, 2.0f, heightD - heightU));
-    return normal;
+  float heightL = getHeightAt(x - 1, z);
+  float heightR = getHeightAt(x + 1, z);
+  float heightD = getHeightAt(x, z - 1);
+  float heightU = getHeightAt(x, z + 1);
+  glm::vec3 normal = glm::normalize(glm::vec3(heightL - heightR, 2.0f, heightD - heightU));
+  return normal;
 }
 
 int main() {
@@ -2018,7 +2230,7 @@ int main() {
   if (!glfwInit()) return -1;
   glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-  //glfwWindowHint(GLFW_SAMPLES, 4); 
+  glfwWindowHint(GLFW_SAMPLES, 4); 
   glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
   GLFWwindow* window = glfwCreateWindow(wi,he,"OpenGL 4.6 Cube & Sphere Scene",nullptr,nullptr);
   if (!window) { glfwTerminate(); return -1; }
@@ -2035,6 +2247,7 @@ int main() {
   glEnable(GL_DEPTH_TEST);
   // glDepthMask(1);
   // glEnable(GL_CULL_FACE);
+  //glEnable(GL_DITHER);
   // glCullFace(GL_BACK);
   // glFrontFace(GL_CW);
   //  glEnable(GL_MULTISAMPLE);
@@ -2064,9 +2277,38 @@ int main() {
   stbi_image_free(data);
   createTerrainMesh();
   setupTerrainBuffers();
+
+  createPathsMap(heightMap);
+
+
+  // int startX = 404, startZ = 40;
+  int startX = 256, startZ = 256;
+  int goalX = 40, goalZ = 440;
+  int startIdx = startZ * terrainSize + startX;
+  int goalIdx = goalZ * terrainSize + goalX;
+
+  float totalPathCost = 0.0f;
+  std::vector<int> path = dijkstra(nodes, startIdx, goalIdx, totalPathCost);
+
+  int startX1 = 440, startZ1 = 40;
+  int goalX1 = 44, goalZ1 = 440;
+  int startIdx1 = startZ1 * terrainSize + startX1;
+  int goalIdx1 = goalZ1 * terrainSize + goalX1;
+
+  float totalPathCost1 = 0.0f;
+  std::vector<int> path1 = dijkstra(nodes, startIdx1, goalIdx1, totalPathCost1);
+  
+  //   // Вывод пути
+  // std::cout << "Кратчайший путь от (" << startX << ", " << startZ << ") до (" << goalX << ", " << goalZ << "):\n";
+  // for (int idx : path) {
+  //     const NodeP& n = nodes[idx];
+  //     std::cout << "(" << n.x << ", " << n.z << ", h=" << n.height << ") ";
+  // }
+  // std::cout << "\nОбщая стоимость пути: " << totalPathCost << std::endl;
+  
   //glEnable(GL_FRAMEBUFFER_SRGB);
   GLuint shaderProgram = createProgram(vertexShaderSrc,fragmentShaderSrc);//main
-  GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc, depth_fragment_shader);//shadow
+  //GLuint shaderDepthProgram = createProgram(depth_vertex_shadersrc, depth_fragment_shader);//shadow
   
   // VAO/VBO для куба
   GLuint cubeVAO, cubeVBO;
@@ -2212,6 +2454,18 @@ int main() {
   // delete[] imageData;
 
 
+  MovingObject obj;
+  
+  initObject(obj,path, 0.5f);
+
+
+  MovingObject obj1;
+  
+  initObject(obj1,path1, 0.5f);
+
+
+
+
   
   // Настройка OpenGL
   glEnable(GL_BLEND);
@@ -2240,14 +2494,14 @@ int main() {
       }
     }
 
-    lightProjection = glm::perspective(glm::radians(45.0f), (float)wi / he, 1.0f, 2000.f);//glm::ortho(-2024, 2024, -2024, 2024,near_plane,far_plane);//
+    lightProjection = glm::perspective(glm::radians(45.0f), (float)wi / he, 0.1f, 2000.f);//glm::ortho(-SIZE, SIZE, -SIZE, SIZE,-SIZE,SIZE);//
     lightView = glm::lookAt(lightPos, glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f));
-    lightSpaceMatrix = lightProjection * lightView;
+    lightSpaceMatrix = lightProjection * lightView*glm::mat4(1.0);
 
     
     view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
     glm::mat4 projection =
-      glm::perspective(glm::radians(fov), (float)wi / he, 0.1f, 2000.f);
+      glm::perspective(glm::radians(45.0f), (float)wi / he, 0.1f, 2000.f);
     glm::mat4 Oproj = glm::ortho(0.0f, float(wi), 0.0f, float(he),-1.f,1.f);
     // per-frame time logic
     // --------------------
@@ -2260,7 +2514,12 @@ int main() {
     //angle += glm::radians(20.0f) * deltaTime; // скорость вращения
     //lightPos.x = 200.0f * cos(angle);
     //lightPos.z = 200.0f * sin(angle);
-    updateObjects(objects, bvhRoot);
+    updateObject(obj,0.01f);
+    updateObject(obj1,0.01f);
+    objects[0].position=glm::vec3(obj.position.x-256.0f,getHeightAt(obj.position.x-256.0f,obj.position.z-256.0f)-239.0f,obj.position.z-256.0f);
+    objects[1].position=glm::vec3(obj1.position.x-256.0f,getHeightAt(obj1.position.x-256.0f,obj1.position.z-256.0f)-239.0f,obj1.position.z-256.0f);
+    //updateObjects(objects, bvhRoot);
+    
     glClearColor(0.1f,0.1f,0.15f,1.f);
     glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
 
@@ -2292,7 +2551,7 @@ int main() {
     // 		 objects6,
     // 		 objects7,lightSpaceMatrix);
 
-    //renderTerrain(shaderProgram);
+
     RenderObjsMain(shaderProgram, NULL, cubeVAO,
 		   lightSpaceMatrix, view,
 		   projection,
@@ -2310,7 +2569,7 @@ int main() {
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     drawDescriptor(DshaderProgram,textureID,dVAO,glm::mat4(1.0f),Oproj);
     //glDisable(GL_BLEND);
-    //RenderText(shaderText, std::to_string(cameraPos.x)+" "+std::to_string(cameraPos.y)+" "+std::to_string(cameraPos.z), 10.0f, 10.0f, 0.5f, glm::vec3(0.5, 0.8f, 0.2f),Oproj);
+    RenderText(shaderText, std::to_string(lightPos.x)+" "+std::to_string(lightPos.y)+" "+std::to_string(lightPos.z), 10.0f, 10.0f, 0.25f, glm::vec3(0.5, 0.8f, 0.2f),Oproj);
     //RenderText(shaderText, "This is sample text", 25.0f, 25.0f, 1.0f, glm::vec3(0.5, 0.8f, 0.2f),Oproj);
     //RenderText(shaderText, "And This text",wi-280.0f, he-30.0f, 0.5f, glm::vec3(0.3, 0.7f, 0.9f),Oproj);
        
@@ -2330,7 +2589,7 @@ int main() {
   glDeleteProgram(shaderText);
   glDeleteVertexArrays(1, &VAOtext);
   glDeleteBuffers(1, &VBOtext);
-  glDeleteProgram(shaderDepthProgram);
+  //glDeleteProgram(shaderDepthProgram);
   glDeleteVertexArrays(1, &dVAO);
   glDeleteBuffers(1, &dVBO);
   glDeleteBuffers(1, &dEBO);
@@ -2374,22 +2633,24 @@ void processInput(GLFWwindow *window)
   }
   float cameraSpeed = static_cast<float>(20.5 * deltaTime);
   float maxSlopeDegree = 46.0f;
-float maxSlopeRad = glm::radians(maxSlopeDegree);
+  float maxSlopeRad = glm::radians(maxSlopeDegree);
 
- float angle = acos(glm::dot(computeNormal(cameraPos.x,cameraPos.z), glm::vec3(0,1,0))); // угол между нормалью и вертикалью
-if (angle < maxSlopeRad) {
-  // участок проходим
-  if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
-    cameraPos += cameraSpeed * cameraFront;
-  if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+  float angle = acos(glm::dot(computeNormal(cameraPos.x,cameraPos.z), glm::vec3(0,1,0))); // угол между нормалью и вертикалью
+  if (angle < maxSlopeRad) {
+    // участок проходим
+    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+      cameraPos += cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+      cameraPos -= cameraSpeed * cameraFront;
+    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+      cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+      cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
+    if (glfwGetKey(window,GLFW_KEY_SPACE)== GLFW_PRESS)cameraPos.y += cameraSpeed*2;
+    if (glfwGetKey(window,GLFW_KEY_LEFT_SHIFT)== GLFW_PRESS) cameraPos.y -= cameraSpeed;
+  } else {
     cameraPos -= cameraSpeed * cameraFront;
-  if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
-    cameraPos -= glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
-  if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
-    cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) * cameraSpeed;
-} else {
-  cameraPos -= cameraSpeed * cameraFront;
-}
+  }
 
 
   // В функции обработки клавиш (например, в processInput):
