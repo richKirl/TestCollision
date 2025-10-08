@@ -6,6 +6,7 @@
 #include <glm/gtc/noise.hpp> // для функций шума
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
+#include <queue>
 #include <map>
 #include <algorithm>
 #include <iostream>
@@ -24,7 +25,8 @@
 #include "stb_image_write.h"
 #include <ft2build.h>
 #include FT_FREETYPE_H
-//clang++20 -std=c++26 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -I/usr/local/include -I/usr/local/include/freetype2 -L/usr/local/lib -DSHM -lGL -lGLU -lGLEW -lglfw -lm -lfreetype
+//clang++20 -std=c++26 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -I/usr/local/include -I/usr/local/include/freetype2 -L/usr/local/lib -DSHM -lGL -lGLU -lGLEW -lglfw -lm -lfreetype #freebsd
+//g++ -std=c++20 -O3 -msse4.2 -mavx testcolBB1.cpp -o testcolBB1 -DSHM -I/usr/include/freetype2/ -lGL -lGLU -lGLEW -lglfw -lm -lfreetype #ubuntu
 FT_Library ft;
 FT_Face face;
 
