@@ -1,0 +1,33 @@
+#include "BVH.h"
+
+
+BVHNode *buildBVH(std::vector<Object3D *> &objs, int depth)
+{
+    BVHNode *node = new BVHNode();
+    // Создаем изначальный AABB
+    node->box = AABB(glm::vec3(FLT_MAX), glm::vec3(-FLT_MAX));
+    for (auto *o : objs)
+        node->box.expand(*o);
+    if (objs.size() <= 2)
+    {
+        node->objects = objs;
+        return node;
+    }
+    int axis = depth % 3;
+    auto compareAxis = [axis](Object3D *a, Object3D *b)
+    {
+        float aCoord = (axis == 0) ? a->position.x : (axis == 1) ? a->position.y
+                                                                 : a->position.z;
+        float bCoord = (axis == 0) ? b->position.x : (axis == 1) ? b->position.y
+                                                                 : b->position.z;
+        return aCoord < bCoord;
+    };
+    std::sort(objs.begin(), objs.end(), compareAxis);
+    size_t mid = objs.size() / 2;
+    std::vector<Object3D *> leftObjs(objs.begin(), objs.begin() + mid);
+    std::vector<Object3D *> rightObjs(objs.begin() + mid, objs.end());
+    // std::cout<<depth<<std::endl;
+    node->left = buildBVH(leftObjs, depth + 1);
+    node->right = buildBVH(rightObjs, depth + 1);
+    return node;
+}
